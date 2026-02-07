@@ -1,9 +1,7 @@
-import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
-import Link from 'next/link'
-import { Button } from '@/components/ui/button'
-import { LogOut, User as UserIcon } from 'lucide-react'
+import { redirect } from 'next/navigation'
 import { signOut } from './actions'
+import DashboardSidebar from '@/components/dashboard-sidebar'
 
 export default async function DashboardLayout({
     children,
@@ -11,39 +9,37 @@ export default async function DashboardLayout({
     children: React.ReactNode
 }) {
     const supabase = await createClient()
-
-    const {
-        data: { user },
-    } = await supabase.auth.getUser()
+    const { data: { user } } = await supabase.auth.getUser()
 
     if (!user) {
         redirect('/login')
     }
 
+    // Get user profile with batch info
+    const { data: profile } = await supabase
+        .from('profiles')
+        .select('*, batches(batch_code, current_semester, batch_number)')
+        .eq('id', user.id)
+        .single()
+
+    const batchInfo = profile?.batches
+    const userYear = batchInfo?.batch_number ? 25 - batchInfo.batch_number : 0
+
     return (
-        <div className="min-h-screen flex flex-col bg-zinc-50 dark:bg-zinc-950">
-            <header className="border-b bg-white dark:bg-zinc-900 sticky top-0 z-10">
-                <div className="container mx-auto px-4 h-16 flex items-center justify-between">
-                    <Link href="/dashboard" className="font-bold text-lg flex items-center gap-2">
-                        UniLearn Dashboard
-                    </Link>
+        <div className="min-h-screen bg-[#f8fafc] flex flex-col md:flex-row">
+            {/* Responsive Sidebar */}
+            <DashboardSidebar
+                profile={profile}
+                batchInfo={batchInfo}
+                userYear={userYear}
+                signOutAction={signOut}
+            />
 
-                    <div className="flex items-center gap-4">
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground bg-zinc-100 dark:bg-zinc-800 px-3 py-1 rounded-full">
-                            <UserIcon className="h-4 w-4" />
-                            <span>{user.user_metadata.index_number || user.email}</span>
-                        </div>
-
-                        <form action={signOut}>
-                            <Button variant="ghost" size="icon" title="Sign Out">
-                                <LogOut className="h-5 w-5" />
-                            </Button>
-                        </form>
-                    </div>
+            {/* Main Content */}
+            <main className="flex-1 overflow-auto min-h-screen w-full">
+                <div className="max-w-6xl mx-auto p-4 md:p-8">
+                    {children}
                 </div>
-            </header>
-            <main className="flex-1 container mx-auto px-4 py-8">
-                {children}
             </main>
         </div>
     )
