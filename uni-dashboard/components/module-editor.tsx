@@ -1,16 +1,14 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
-import { createClient } from '@/utils/supabase/client'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { sanitizeText } from '@/utils/sanitize'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import PastPaperForm, { PastPaperStructure, defaultPaperStructure } from './past-paper-form'
 import CAAssignmentForm, { ContinuousAssessment } from './ca-assignment-form'
-import RichTextArea, { FormattedContent } from './rich-text-editor'
-import BatchSelector from './batch-selector'
+import RichTextArea from './rich-text-editor'
 import { useBatchContent } from '@/hooks/use-batch-content'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
@@ -21,12 +19,11 @@ import {
     ChevronRight,
     Link as LinkIcon,
     FileText,
-    Youtube,
-    Folder,
     Loader2,
     User,
     Copy,
-    AlertCircle
+    CheckCircle,
+    Info
 } from 'lucide-react'
 
 interface ContentBlock {
@@ -59,15 +56,11 @@ interface ModuleContent {
 interface Props {
     moduleId: string
     canEdit: boolean
-    userBatchId?: string
-    userIndex?: string
 }
 
 export default function ModuleEditor({
     moduleId,
-    canEdit,
-    userBatchId,
-    userIndex
+    canEdit
 }: Props) {
     // Use batch content hook
     const {
@@ -78,7 +71,6 @@ export default function ModuleEditor({
         contentData,
         isLoading,
         isSaving,
-        error,
         handleBatchChange,
         saveContent,
         cloneFromBatch
@@ -94,25 +86,40 @@ export default function ModuleEditor({
     const [lastSaved, setLastSaved] = useState<string | null>(null)
     const [isEditMode, setIsEditMode] = useState(false)
     const [showCloneSuccess, setShowCloneSuccess] = useState(false)
-    const supabase = createClient()
+    const nextIdRef = useRef(0)
 
     // Load content when contentData changes
     useEffect(() => {
         if (contentData) {
-            setContent({
-                topics: contentData.content?.content_json?.topics || [],
-                pastPaperStructure: contentData.pastPaperStructure?.structure_json || defaultPaperStructure,
-                continuousAssessments: contentData.continuousAssessments.map(ca => ({
-                    caNumber: ca.ca_number,
-                    type: ca.ca_type as ContinuousAssessment['type'],
-                    weight: ca.ca_weight,
-                    description: ca.description
-                })) || [],
-                additionalNotes: contentData.content?.content_json?.additionalNotes || ''
-            })
-            setLecturerName(contentData.content?.lecturer_name || '')
+            const syncTimer = window.setTimeout(() => {
+                setContent({
+                    topics: contentData.content?.content_json?.topics || [],
+                    pastPaperStructure: contentData.pastPaperStructure?.structure_json || defaultPaperStructure,
+                    continuousAssessments: contentData.continuousAssessments.map(ca => ({
+                        caNumber: ca.ca_number,
+                        type: ca.ca_type as ContinuousAssessment['type'],
+                        weight: ca.ca_weight,
+                        description: ca.description
+                    })) || [],
+                    additionalNotes: contentData.content?.content_json?.additionalNotes || ''
+                })
+                setLecturerName(contentData.content?.lecturer_name || '')
+            }, 0)
+
+            return () => window.clearTimeout(syncTimer)
         }
     }, [contentData])
+
+    const handleClone = useCallback(async () => {
+        if (!selectedBatch || !defaultBatch) return
+
+        const result = await cloneFromBatch(defaultBatch)
+
+        if (result.success) {
+            setShowCloneSuccess(true)
+            setTimeout(() => setShowCloneSuccess(false), 3000)
+        }
+    }, [selectedBatch, defaultBatch, cloneFromBatch])
 
     // Track if we have attempted auto-clone
     const hasAttemptedClone = useRef(false)
@@ -131,18 +138,25 @@ export default function ModuleEditor({
             !hasAttemptedClone.current
 
         if (shouldAutoClone) {
-            console.log('Auto-cloning from batch', defaultBatch)
-            hasAttemptedClone.current = true
-            handleClone()
-            setIsEditMode(false)
+            const cloneTimer = window.setTimeout(() => {
+                console.log('Auto-cloning from batch', defaultBatch)
+                hasAttemptedClone.current = true
+                void handleClone()
+                setIsEditMode(false)
+            }, 0)
+
+            return () => window.clearTimeout(cloneTimer)
         }
         
         if (!isViewingOwnBatch) {
             hasAttemptedClone.current = false
         }
-    }, [isEditMode, selectedBatch, userBatchNumber, defaultBatch, content.topics])
+    }, [isEditMode, selectedBatch, userBatchNumber, defaultBatch, content.topics, handleClone])
 
-    const generateId = () => Math.random().toString(36).substr(2, 9)
+    const generateId = () => {
+        nextIdRef.current += 1
+        return `local-${nextIdRef.current}`
+    }
 
     // Topic functions
     const addTopic = () => {
@@ -300,17 +314,6 @@ export default function ModuleEditor({
         }
     }
 
-    const handleClone = async () => {
-        if (!selectedBatch || !defaultBatch) return
-
-        const result = await cloneFromBatch(defaultBatch)
-
-        if (result.success) {
-            setShowCloneSuccess(true)
-            setTimeout(() => setShowCloneSuccess(3000), false)
-        }
-    }
-
     // Show loading state
     if (isLoading && !selectedBatch) {
         return (
@@ -328,7 +331,7 @@ export default function ModuleEditor({
                     <FileText className="h-12 w-12 text-gray-300 mx-auto mb-4" />
                     <p className="text-gray-500">No content yet.</p>
                     <p className="text-sm text-gray-400 mt-2">
-                        Only students in the correct year can add content.
+                        Only students in the current semester window can add content.
                     </p>
                 </CardContent>
             </Card>
@@ -457,8 +460,8 @@ export default function ModuleEditor({
                             </div>
                             <h3 className="text-lg font-semibold text-[#161616] mb-2">Start Building Content</h3>
                             <p className="text-gray-500 mb-4 max-w-md mx-auto">
-                                Click "Add Topic" above to start organizing this module's learning materials.
-                                Add topics, sub-topics, notes, and links!
+                                Click &ldquo;Add Topic&rdquo; above to start organizing this module&apos;s learning materials.
+                                Add topics, sub-topics, notes, and links.
                             </p>
                             <Button onClick={addTopic} style={{ backgroundColor: '#1B61D9' }}>
                                 <Plus className="h-4 w-4 mr-2" /> Add Your First Topic
