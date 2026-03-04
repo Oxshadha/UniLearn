@@ -17,7 +17,7 @@ interface RichTextAreaProps {
 export function renderFormattedText(text: string): string {
     if (!text) return ''
 
-    let html = text
+    const html = text
         // Convert **bold** to <strong>
         .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
         // Convert *italic* to <em>

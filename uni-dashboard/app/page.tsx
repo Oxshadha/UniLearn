@@ -55,7 +55,7 @@ export default function LandingPage() {
           {/* Single Feature Card */}
           <Card className="bg-white border-gray-100 shadow-xl w-full max-w-3xl">
             <CardContent className="p-6 md:p-8">
-              <h3 className="text-xl md:text-2xl font-bold text-[#161616] mb-4 md:mb-6 text-center">What's Inside UniLearn?</h3>
+              <h3 className="text-xl md:text-2xl font-bold text-[#161616] mb-4 md:mb-6 text-center">What&apos;s Inside UniLearn?</h3>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
                 <div className="flex flex-col items-center text-center">

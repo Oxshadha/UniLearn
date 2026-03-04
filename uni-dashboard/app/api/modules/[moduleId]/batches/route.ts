@@ -3,6 +3,13 @@ import { NextRequest, NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
 
+interface ProfileBatchRow {
+    batch_id: string | null
+    batches: {
+        batch_number: number
+    } | null
+}
+
 /**
  * GET /api/modules/[moduleId]/batches
  * Get available batch versions for a module
@@ -29,26 +36,25 @@ export async function GET(
             .eq('id', user.id)
             .single()
 
-        console.log('Profile data:', JSON.stringify(profile, null, 2))
-        console.log('Profile error:', profileError)
-
         if (profileError) {
             return NextResponse.json({ error: `Profile error: ${profileError.message}` }, { status: 500 })
         }
 
-        if (!profile) {
+        const typedProfile = profile as ProfileBatchRow | null
+
+        if (!typedProfile) {
             return NextResponse.json({ error: 'Profile not found' }, { status: 404 })
         }
 
-        if (!profile.batch_id) {
+        if (!typedProfile.batch_id) {
             return NextResponse.json({ error: 'User has no batch assigned. Please contact admin.' }, { status: 404 })
         }
 
-        const batchData = profile.batches as any
+        const batchData = typedProfile.batches
         if (!batchData || !batchData.batch_number) {
             return NextResponse.json({
                 error: 'Batch data not found. User has batch_id but join failed.',
-                debug: { batch_id: profile.batch_id, batches: profile.batches }
+                debug: { batch_id: typedProfile.batch_id, batches: typedProfile.batches }
             }, { status: 500 })
         }
 

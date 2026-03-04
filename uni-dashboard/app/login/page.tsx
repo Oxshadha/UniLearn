@@ -22,6 +22,8 @@ export default function LoginPage() {
     const router = useRouter()
     const supabase = createClient()
 
+    const getStudentEmail = (index: string) => `${index.trim().toLowerCase()}@student.unilearn.edu`
+
     // Parse index to extract batch info
     const parseIndex = (index: string) => {
         const clean = index.trim().toUpperCase()
@@ -56,7 +58,7 @@ export default function LoginPage() {
         setError(null)
 
         const cleanIndex = indexNumber.trim().toUpperCase()
-        const email = `${cleanIndex.toLowerCase()}@student.unilearn.edu`
+        const email = getStudentEmail(cleanIndex)
 
         const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
             email,
@@ -64,7 +66,11 @@ export default function LoginPage() {
         })
 
         if (authError) {
-            setError(authError.message)
+            if (authError.message.toLowerCase().includes('invalid login credentials')) {
+                setError(`Login failed for ${email}. Check the index number and password, or use Register if this account does not exist yet.`)
+            } else {
+                setError(authError.message)
+            }
             setLoading(false)
             return
         }
@@ -101,6 +107,18 @@ export default function LoginPage() {
 
         if (!parsed) {
             setError("Invalid Index Number format. Expected: 235550X")
+            setLoading(false)
+            return
+        }
+
+        const { data: existingProfile } = await supabase
+            .from('profiles')
+            .select('id, index_number')
+            .eq('index_number', cleanIndex)
+            .maybeSingle()
+
+        if (existingProfile) {
+            setError(`A profile already exists for ${cleanIndex}. If you deleted the user manually, also remove the matching auth.users row for ${getStudentEmail(cleanIndex)}.`)
             setLoading(false)
             return
         }
@@ -155,7 +173,7 @@ export default function LoginPage() {
             return
         }
 
-        const email = `${cleanIndex.toLowerCase()}@student.unilearn.edu`
+        const email = getStudentEmail(cleanIndex)
 
         const { data: signupData, error: signUpError } = await supabase.auth.signUp({
             email,
@@ -170,7 +188,11 @@ export default function LoginPage() {
         })
 
         if (signUpError) {
-            setError(signUpError.message)
+            if (signUpError.message.toLowerCase().includes('user already registered')) {
+                setError(`Supabase Auth already has an account for ${email}. Delete the row from auth.users or sign in instead.`)
+            } else {
+                setError(signUpError.message)
+            }
             setLoading(false)
             return
         }
@@ -285,6 +307,11 @@ export default function LoginPage() {
                     <p className="text-xs text-center text-gray-500 px-4">
                         Your batch and year will be automatically detected from your Index Number
                     </p>
+                    {indexNumber.trim() && (
+                        <p className="text-xs text-center text-gray-400 px-4">
+                            Login email: {getStudentEmail(indexNumber.trim().toUpperCase())}
+                        </p>
+                    )}
                 </CardFooter>
             </Card>
         </div>

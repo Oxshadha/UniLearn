@@ -36,7 +36,11 @@ export default function CAAssignmentForm({ value, onChange, canEdit }: Props) {
     const [cas, setCas] = useState<ContinuousAssessment[]>(value || [])
 
     useEffect(() => {
-        setCas(value || [])
+        const syncTimer = window.setTimeout(() => {
+            setCas(value || [])
+        }, 0)
+
+        return () => window.clearTimeout(syncTimer)
     }, [value])
 
     const totalCAWeight = cas.reduce((sum, ca) => sum + ca.weight, 0)
@@ -64,7 +68,11 @@ export default function CAAssignmentForm({ value, onChange, canEdit }: Props) {
         onChange(updated)
     }
 
-    const updateCA = (index: number, field: keyof ContinuousAssessment, newValue: any) => {
+    const updateCA = (
+        index: number,
+        field: keyof ContinuousAssessment,
+        newValue: ContinuousAssessment[keyof ContinuousAssessment]
+    ) => {
         const updated = [...cas]
         updated[index] = { ...updated[index], [field]: newValue }
         setCas(updated)
