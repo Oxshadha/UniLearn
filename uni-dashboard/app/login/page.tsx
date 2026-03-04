@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
-import { containsSqlInjection, sanitizeText } from '@/utils/sanitize'
+import { sanitizeText } from '@/utils/sanitize'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -12,6 +12,7 @@ import { Loader2, GraduationCap, ArrowLeft, Eye, EyeOff } from 'lucide-react'
 import BackgroundAnimation from '@/components/background-animation'
 import Link from 'next/link'
 import { getAcademicYearFromBatchNumber, getStartingSemesterForBatch } from '@/lib/academic'
+import { getStudentEmail, validateStudentCredentials } from '@/lib/auth-validation'
 
 export default function LoginPage() {
     const [indexNumber, setIndexNumber] = useState('')
@@ -21,48 +22,6 @@ export default function LoginPage() {
     const [error, setError] = useState<string | null>(null)
     const router = useRouter()
     const supabase = createClient()
-
-    const getStudentEmail = (index: string) => `${index.trim().toLowerCase()}@student.unilearn.edu`
-    const indexPattern = /^\d{6}[A-Za-z]$/
-    const passwordPattern = /^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_\-+=[\]{};:'",.<>/?\\|`~])[A-Za-z\d!@#$%^&*()_\-+=[\]{};:'",.<>/?\\|`~]{8,}$/
-    const scriptPattern = /<|>|script|javascript:/i
-
-    const validateCredentials = (index: string, passwordValue: string) => {
-        const cleanIndex = index.trim().toUpperCase()
-
-        if (!indexPattern.test(cleanIndex)) {
-            return {
-                valid: false,
-                error: 'Index number must be in the format 235550X.'
-            }
-        }
-
-        if (containsSqlInjection(cleanIndex) || scriptPattern.test(cleanIndex)) {
-            return {
-                valid: false,
-                error: 'Invalid characters detected in index number.'
-            }
-        }
-
-        if (containsSqlInjection(passwordValue) || scriptPattern.test(passwordValue)) {
-            return {
-                valid: false,
-                error: 'Invalid characters detected in password.'
-            }
-        }
-
-        if (!passwordPattern.test(passwordValue)) {
-            return {
-                valid: false,
-                error: 'Password must be at least 8 characters and include an uppercase letter, a number, and an ASCII special character. Emojis and spaces are not allowed.'
-            }
-        }
-
-        return {
-            valid: true,
-            cleanIndex
-        }
-    }
 
     // Parse index to extract batch info
     const parseIndex = (index: string) => {
@@ -97,7 +56,7 @@ export default function LoginPage() {
         setLoading(true)
         setError(null)
 
-        const validation = validateCredentials(indexNumber, password)
+        const validation = validateStudentCredentials(indexNumber, password)
         if (!validation.valid) {
             setError(validation.error)
             setLoading(false)
@@ -145,7 +104,7 @@ export default function LoginPage() {
         setLoading(true)
         setError(null)
 
-        const validation = validateCredentials(indexNumber, password)
+        const validation = validateStudentCredentials(indexNumber, password)
         if (!validation.valid) {
             setError(validation.error)
             setLoading(false)
