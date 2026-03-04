@@ -3,6 +3,28 @@ import { NextRequest, NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
 
+interface ProfileBatchRow {
+    index_number: string
+    batches: {
+        batch_number: number
+    } | null
+}
+
+interface ContinuousAssessmentInput {
+    caNumber: number
+    type: string
+    weight: number
+    description: string
+}
+
+interface SaveContentBody {
+    batchNumber?: number
+    contentJson?: Record<string, unknown>
+    pastPaperStructure?: Record<string, unknown> | null
+    continuousAssessments?: ContinuousAssessmentInput[]
+    lecturerName?: string
+}
+
 /**
  * GET /api/modules/[moduleId]/content?batch=24
  * Fetch module content for a specific batch
@@ -28,7 +50,7 @@ export async function GET(
         }
 
         // Fetch content for the batch
-        const { data: contentVersion, error: contentError } = await supabase
+        const { data: contentVersion } = await supabase
             .from('module_content_versions')
             .select('*')
             .eq('module_id', moduleId)
@@ -82,7 +104,7 @@ export async function POST(
     try {
         const supabase = await createClient()
         const { moduleId } = params
-        const body = await request.json()
+        const body = await request.json() as SaveContentBody
 
         const {
             batchNumber,
@@ -103,13 +125,22 @@ export async function POST(
         }
 
         // Verify user can edit this batch
-        const { data: profile } = await supabase
+        const { data: profileRow, error: profileError } = await supabase
             .from('profiles')
-            .select('batch_id, batches(batch_number)')
+            .select('index_number, batches(batch_number)')
             .eq('id', user.id)
             .single()
 
-        const userBatchNumber = (profile?.batches as any)?.batch_number
+        const profile = profileRow as ProfileBatchRow | null
+
+        if (profileError || !profile?.batches?.batch_number) {
+            return NextResponse.json(
+                { error: 'Profile is missing a valid batch assignment' },
+                { status: 403 }
+            )
+        }
+
+        const userBatchNumber = profile.batches.batch_number
 
         if (userBatchNumber !== batchNumber) {
             return NextResponse.json(
@@ -118,25 +149,37 @@ export async function POST(
             )
         }
 
-        // Save/update module content
-        if (contentJson) {
-            const { error: contentError } = await supabase
-                .from('module_content_versions')
-                .upsert({
-                    module_id: moduleId,
-                    batch_number: batchNumber,
-                    content_json: contentJson,
-                    lecturer_name: lecturerName,
-                    updated_by: user.id,
-                    created_by: user.id
-                }, {
-                    onConflict: 'module_id,batch_number'
-                })
+        const { data: existingContentVersion } = await supabase
+            .from('module_content_versions')
+            .select('id, content_json, lecturer_name')
+            .eq('module_id', moduleId)
+            .eq('batch_number', batchNumber)
+            .maybeSingle()
 
-            if (contentError) {
-                console.error('Error saving content:', contentError)
-                return NextResponse.json({ error: contentError.message }, { status: 500 })
-            }
+        const nextContentJson = contentJson ?? existingContentVersion?.content_json ?? {
+            topics: [],
+            additionalNotes: ''
+        }
+        const nextLecturerName = lecturerName ?? existingContentVersion?.lecturer_name ?? null
+
+        const { data: savedContentVersion, error: contentError } = await supabase
+            .from('module_content_versions')
+            .upsert({
+                module_id: moduleId,
+                batch_number: batchNumber,
+                content_json: nextContentJson,
+                lecturer_name: nextLecturerName,
+                updated_by: user.id,
+                created_by: user.id
+            }, {
+                onConflict: 'module_id,batch_number'
+            })
+            .select('id, content_json')
+            .single()
+
+        if (contentError) {
+            console.error('Error saving content:', contentError)
+            return NextResponse.json({ error: contentError.message }, { status: 500 })
         }
 
         // Save/update past paper structure
@@ -162,11 +205,16 @@ export async function POST(
         // Save/update continuous assessments
         if (continuousAssessments && Array.isArray(continuousAssessments)) {
             // Delete existing CAs for this batch
-            await supabase
+            const { error: deleteCaError } = await supabase
                 .from('continuous_assessments')
                 .delete()
                 .eq('module_id', moduleId)
                 .eq('batch_number', batchNumber)
+
+            if (deleteCaError) {
+                console.error('Error clearing CAs:', deleteCaError)
+                return NextResponse.json({ error: deleteCaError.message }, { status: 500 })
+            }
 
             // Insert new CAs
             if (continuousAssessments.length > 0) {
@@ -188,6 +236,24 @@ export async function POST(
                     return NextResponse.json({ error: caError.message }, { status: 500 })
                 }
             }
+        }
+
+        const { error: logError } = await supabase
+            .from('edit_logs')
+            .insert({
+                module_content_version_id: savedContentVersion.id,
+                module_id: moduleId,
+                batch_number: batchNumber,
+                edited_by: user.id,
+                edited_by_index: profile.index_number,
+                action_type: 'save',
+                content_snapshot: savedContentVersion.content_json,
+                edit_reason: 'Saved module content'
+            })
+
+        if (logError) {
+            console.error('Error writing edit log:', logError)
+            return NextResponse.json({ error: logError.message }, { status: 500 })
         }
 
         return NextResponse.json({ success: true })

@@ -3,6 +3,18 @@ import { NextRequest, NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
 
+interface ProfileBatchRow {
+    index_number: string
+    batches: {
+        batch_number: number
+    } | null
+}
+
+interface CloneBody {
+    fromBatch?: number
+    toBatch?: number
+}
+
 /**
  * POST /api/modules/[moduleId]/clone
  * Clone content from one batch to another
@@ -15,7 +27,7 @@ export async function POST(
     try {
         const supabase = await createClient()
         const { moduleId } = params
-        const body = await request.json()
+        const body = await request.json() as CloneBody
 
         const { fromBatch, toBatch } = body
 
@@ -33,13 +45,22 @@ export async function POST(
         }
 
         // Verify user can edit the target batch
-        const { data: profile } = await supabase
+        const { data: profileRow, error: profileError } = await supabase
             .from('profiles')
-            .select('batch_id, batches(batch_number)')
+            .select('index_number, batches(batch_number)')
             .eq('id', user.id)
             .single()
 
-        const userBatchNumber = (profile?.batches as any)?.batch_number
+        const profile = profileRow as ProfileBatchRow | null
+
+        if (profileError || !profile?.batches?.batch_number) {
+            return NextResponse.json(
+                { error: 'Profile is missing a valid batch assignment' },
+                { status: 403 }
+            )
+        }
+
+        const userBatchNumber = profile.batches.batch_number
 
         if (userBatchNumber !== toBatch) {
             return NextResponse.json(
@@ -71,26 +92,37 @@ export async function POST(
             .eq('module_id', moduleId)
             .eq('batch_number', fromBatch)
 
-        // Clone module content
-        if (sourceContent) {
-            const { error: contentError } = await supabase
-                .from('module_content_versions')
-                .upsert({
-                    module_id: moduleId,
-                    batch_number: toBatch,
-                    content_json: sourceContent.content_json,
-                    lecturer_name: sourceContent.lecturer_name,
-                    cloned_from_batch: fromBatch,
-                    created_by: user.id,
-                    updated_by: user.id
-                }, {
-                    onConflict: 'module_id,batch_number'
-                })
+        if (!sourceContent && !sourcePaper && (!sourceCAs || sourceCAs.length === 0)) {
+            return NextResponse.json(
+                { error: 'No source content found for the selected batch' },
+                { status: 404 }
+            )
+        }
 
-            if (contentError) {
-                console.error('Error cloning content:', contentError)
-                return NextResponse.json({ error: contentError.message }, { status: 500 })
-            }
+        const targetContentJson = sourceContent?.content_json ?? {
+            topics: [],
+            additionalNotes: ''
+        }
+
+        const { data: clonedContentVersion, error: contentError } = await supabase
+            .from('module_content_versions')
+            .upsert({
+                module_id: moduleId,
+                batch_number: toBatch,
+                content_json: targetContentJson,
+                lecturer_name: sourceContent?.lecturer_name ?? null,
+                cloned_from_batch: fromBatch,
+                created_by: user.id,
+                updated_by: user.id
+            }, {
+                onConflict: 'module_id,batch_number'
+            })
+            .select('id, content_json')
+            .single()
+
+        if (contentError) {
+            console.error('Error cloning content:', contentError)
+            return NextResponse.json({ error: contentError.message }, { status: 500 })
         }
 
         // Clone past paper structure
@@ -114,14 +146,18 @@ export async function POST(
         }
 
         // Clone CAs
-        if (sourceCAs && sourceCAs.length > 0) {
-            // Delete existing CAs for target batch
-            await supabase
-                .from('continuous_assessments')
-                .delete()
-                .eq('module_id', moduleId)
-                .eq('batch_number', toBatch)
+        const { error: deleteCaError } = await supabase
+            .from('continuous_assessments')
+            .delete()
+            .eq('module_id', moduleId)
+            .eq('batch_number', toBatch)
 
+        if (deleteCaError) {
+            console.error('Error clearing CAs:', deleteCaError)
+            return NextResponse.json({ error: deleteCaError.message }, { status: 500 })
+        }
+
+        if (sourceCAs && sourceCAs.length > 0) {
             // Insert cloned CAs
             const casToInsert = sourceCAs.map(ca => ({
                 module_id: moduleId,
@@ -140,6 +176,24 @@ export async function POST(
                 console.error('Error cloning CAs:', caError)
                 return NextResponse.json({ error: caError.message }, { status: 500 })
             }
+        }
+
+        const { error: logError } = await supabase
+            .from('edit_logs')
+            .insert({
+                module_content_version_id: clonedContentVersion.id,
+                module_id: moduleId,
+                batch_number: toBatch,
+                edited_by: user.id,
+                edited_by_index: profile.index_number,
+                action_type: 'clone',
+                content_snapshot: clonedContentVersion.content_json,
+                edit_reason: `Cloned from batch ${fromBatch}`
+            })
+
+        if (logError) {
+            console.error('Error writing edit log:', logError)
+            return NextResponse.json({ error: logError.message }, { status: 500 })
         }
 
         return NextResponse.json({

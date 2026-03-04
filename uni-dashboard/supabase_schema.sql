@@ -187,8 +187,11 @@ CREATE TABLE past_paper_downloads (
 CREATE TABLE edit_logs (
   id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
   module_content_version_id uuid REFERENCES module_content_versions(id) ON DELETE CASCADE,
+  module_id uuid REFERENCES modules(id) ON DELETE CASCADE,
+  batch_number int,
   edited_by uuid REFERENCES profiles(id),
   edited_by_index text NOT NULL,
+  action_type text NOT NULL DEFAULT 'save' CHECK (action_type IN ('save', 'clone')),
   content_snapshot jsonb,
   edit_reason text DEFAULT 'Updated content',
   created_at timestamptz DEFAULT now()
@@ -344,9 +347,23 @@ CREATE POLICY "Upload own batch papers" ON past_paper_downloads
     can_edit_batch_content(module_id, batch_number)
   );
 
--- Edit Logs: Read own edits
-CREATE POLICY "Read own edit logs" ON edit_logs
-  FOR SELECT USING (edited_by = auth.uid());
+-- Edit Logs: Read logs for viewable batch versions, insert only as self
+CREATE POLICY "Read viewable edit logs" ON edit_logs
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1
+      FROM module_content_versions mcv
+      WHERE mcv.id = edit_logs.module_content_version_id
+        AND mcv.batch_number = ANY(
+          get_viewable_batches(
+            (SELECT b.batch_number FROM profiles p JOIN batches b ON b.id = p.batch_id WHERE p.id = auth.uid())
+          )
+        )
+    )
+  );
+
+CREATE POLICY "Insert own edit logs" ON edit_logs
+  FOR INSERT WITH CHECK (edited_by = auth.uid());
 
 -- =====================================================
 -- INDEXES for Performance
@@ -357,6 +374,8 @@ CREATE INDEX idx_past_paper_structures_module_batch ON past_paper_structures(mod
 CREATE INDEX idx_continuous_assessments_module_batch ON continuous_assessments(module_id, batch_number);
 CREATE INDEX idx_past_paper_downloads_module_batch ON past_paper_downloads(module_id, batch_number);
 CREATE INDEX idx_profiles_batch_id ON profiles(batch_id);
+CREATE INDEX idx_edit_logs_version_id ON edit_logs(module_content_version_id);
+CREATE INDEX idx_edit_logs_created_at ON edit_logs(created_at DESC);
 
 -- =====================================================
 -- SAMPLE DATA (Optional - for testing)
