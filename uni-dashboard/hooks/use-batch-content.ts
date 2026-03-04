@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { BatchInfo } from '@/components/batch-selector'
 
 export interface ModuleContent {
-    topics: any[]
+    topics: Array<Record<string, unknown>>
     additionalNotes?: string
 }
 
@@ -16,7 +16,7 @@ export interface PastPaperStructure {
     mcqMarks: number
     essayCount: number
     essayMarks: number
-    essayQuestions: any[]
+    essayQuestions: Array<Record<string, unknown>>
 }
 
 export interface ContinuousAssessment {

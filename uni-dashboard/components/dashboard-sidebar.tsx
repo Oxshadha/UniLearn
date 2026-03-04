@@ -19,41 +19,43 @@ interface DashboardSidebarProps {
     signOutAction: () => Promise<void>
 }
 
-export default function DashboardSidebar({ profile, batchInfo, currentSemester, userYear, signOutAction }: DashboardSidebarProps) {
-    const [isOpen, setIsOpen] = useState(false)
-    const pathname = usePathname()
+interface SidebarContentProps extends DashboardSidebarProps {
+    pathname: string | null
+    onClose: () => void
+}
 
-    // Helper to close menu on navigation
-    const handleLinkClick = () => {
-        setIsOpen(false)
-    }
-
-    const SidebarContent = () => (
+function SidebarContent({
+    profile,
+    batchInfo,
+    currentSemester,
+    userYear,
+    signOutAction,
+    pathname,
+    onClose,
+}: SidebarContentProps) {
+    return (
         <div className="flex flex-col h-full bg-white text-[#161616]">
-            {/* Logo */}
             <div className="p-6 border-b border-gray-100 flex items-center justify-between">
-                <Link href="/dashboard" className="flex items-center gap-3" onClick={handleLinkClick}>
+                <Link href="/dashboard" className="flex items-center gap-3" onClick={onClose}>
                     <div className="p-2 bg-[#1B61D9] rounded-lg">
                         <GraduationCap className="h-6 w-6 text-white" />
                     </div>
                     <span className="text-xl font-bold text-[#161616]">UniLearn</span>
                 </Link>
-                {/* Mobile Close Button (only visible inside mobile sheet) */}
                 <Button
                     variant="ghost"
                     size="icon"
                     className="md:hidden"
-                    onClick={() => setIsOpen(false)}
+                    onClick={onClose}
                 >
                     <X className="h-5 w-5" />
                 </Button>
             </div>
 
-            {/* Navigation */}
             <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
                 <Link
                     href="/dashboard"
-                    onClick={handleLinkClick}
+                    onClick={onClose}
                     className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${pathname === '/dashboard'
                         ? 'bg-[#f0f4ff] text-[#1B61D9]'
                         : 'text-gray-600 hover:bg-[#f0f4ff] hover:text-[#1B61D9]'
@@ -67,7 +69,7 @@ export default function DashboardSidebar({ profile, batchInfo, currentSemester, 
                     <Link
                         key={year}
                         href={`/dashboard/year/${year}`}
-                        onClick={handleLinkClick}
+                        onClick={onClose}
                         className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${year <= userYear
                             ? 'text-gray-600 hover:bg-[#f0f4ff] hover:text-[#1B61D9]'
                             : 'text-gray-400'
@@ -89,7 +91,7 @@ export default function DashboardSidebar({ profile, batchInfo, currentSemester, 
                 <div className="pt-4 mt-4 border-t border-gray-100">
                     <Link
                         href="/dashboard/history"
-                        onClick={handleLinkClick}
+                        onClick={onClose}
                         className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${pathname === '/dashboard/history'
                             ? 'bg-[#f0f4ff] text-[#1B61D9]'
                             : 'text-gray-600 hover:bg-[#f0f4ff] hover:text-[#1B61D9]'
@@ -101,7 +103,6 @@ export default function DashboardSidebar({ profile, batchInfo, currentSemester, 
                 </div>
             </nav>
 
-            {/* User Info */}
             <div className="p-4 border-t border-gray-100 mt-auto">
                 <div className="flex items-center gap-3 px-4 py-3 bg-gray-50 rounded-lg">
                     <div className="p-2 bg-[#1B61D9] rounded-full">
@@ -129,6 +130,15 @@ export default function DashboardSidebar({ profile, batchInfo, currentSemester, 
             </div>
         </div>
     )
+}
+
+export default function DashboardSidebar({ profile, batchInfo, currentSemester, userYear, signOutAction }: DashboardSidebarProps) {
+    const [isOpen, setIsOpen] = useState(false)
+    const pathname = usePathname()
+
+    const handleClose = () => {
+        setIsOpen(false)
+    }
 
     return (
         <>
@@ -147,7 +157,15 @@ export default function DashboardSidebar({ profile, batchInfo, currentSemester, 
 
             {/* Desktop Sidebar (Hidden on Mobile) */}
             <aside className="hidden md:flex w-64 border-r border-gray-200 flex-col fixed inset-y-0 left-0 bg-white z-40">
-                <SidebarContent />
+                <SidebarContent
+                    profile={profile}
+                    batchInfo={batchInfo}
+                    currentSemester={currentSemester}
+                    userYear={userYear}
+                    signOutAction={signOutAction}
+                    pathname={pathname}
+                    onClose={handleClose}
+                />
             </aside>
 
             {/* Spacer for fixed sidebar on desktop */}
@@ -164,7 +182,15 @@ export default function DashboardSidebar({ profile, batchInfo, currentSemester, 
 
                     {/* Sidebar Drawer */}
                     <div className="absolute left-0 top-0 bottom-0 w-[80%] max-w-xs shadow-xl animate-in slide-in-from-left duration-200">
-                        <SidebarContent />
+                        <SidebarContent
+                            profile={profile}
+                            batchInfo={batchInfo}
+                            currentSemester={currentSemester}
+                            userYear={userYear}
+                            signOutAction={signOutAction}
+                            pathname={pathname}
+                            onClose={handleClose}
+                        />
                     </div>
                 </div>
             )}
