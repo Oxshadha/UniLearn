@@ -72,7 +72,11 @@ export default function LoginPage() {
         })
 
         if (authError) {
-            setError(authError.message)
+            if (authError.message.toLowerCase().includes('invalid login credentials')) {
+                setError('No account found for these details. Click "Register New Account" to create one.')
+            } else {
+                setError(authError.message)
+            }
             setLoading(false)
             return
         }
@@ -127,7 +131,7 @@ export default function LoginPage() {
             .maybeSingle()
 
         if (existingProfile) {
-            setError('User already registered')
+            setError('User already registered. Click "Sign In" to continue.')
             setLoading(false)
             return
         }
@@ -197,7 +201,11 @@ export default function LoginPage() {
         })
 
         if (signUpError) {
-            setError(signUpError.message)
+            if (signUpError.message.toLowerCase().includes('user already registered')) {
+                setError('User already registered. Click "Sign In" to continue.')
+            } else {
+                setError(signUpError.message)
+            }
             setLoading(false)
             return
         }
