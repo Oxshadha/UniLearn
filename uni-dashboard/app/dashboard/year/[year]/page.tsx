@@ -22,7 +22,8 @@ export default async function YearPage({
         .eq('id', user?.id)
         .single()
 
-    const userYear = getYearFromSemester(profile?.batches?.current_semester)
+    const currentSemester = profile?.batches?.current_semester || 0
+    const userYear = getYearFromSemester(currentSemester)
     const canEdit = year <= userYear
 
     // Fetch modules for this year
@@ -52,7 +53,7 @@ export default async function YearPage({
                 </div>
 
                 <Badge className={canEdit ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}>
-                    {canEdit ? 'You can edit Year ' + year : 'View Only'}
+                    {canEdit ? `Some modules unlocked in Semester ${currentSemester}` : 'View Only'}
                 </Badge>
             </div>
 
@@ -61,6 +62,7 @@ export default async function YearPage({
                 modules={modules || []}
                 year={year}
                 canEdit={canEdit}
+                currentSemester={currentSemester}
                 userYear={userYear}
             />
         </div>

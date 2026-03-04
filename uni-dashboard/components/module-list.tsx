@@ -1,36 +1,37 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
 import Link from 'next/link'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { BookOpen, ChevronRight, Plus, Trash2, Pencil, X, Check } from 'lucide-react'
+import { BookOpen, ChevronRight, Trash2, Pencil, X, Check, Lock } from 'lucide-react'
 import AddModuleDialog from '@/components/add-module-dialog'
+import { canEditModuleAtSemester } from '@/lib/academic'
 
 interface Module {
     id: string
     code: string
     name: string
     year: number
+    semester: number
 }
 
 interface Props {
     modules: Module[]
     year: number
     canEdit: boolean
+    currentSemester: number
     userYear: number
 }
 
-export default function ModuleList({ modules: initialModules, year, canEdit, userYear }: Props) {
+export default function ModuleList({ modules: initialModules, year, canEdit, currentSemester }: Props) {
     const [modules, setModules] = useState<Module[]>(initialModules)
     const [editingId, setEditingId] = useState<string | null>(null)
     const [editCode, setEditCode] = useState('')
     const [editName, setEditName] = useState('')
-    const router = useRouter()
     const supabase = createClient()
 
     const refreshModules = async () => {
@@ -140,24 +141,43 @@ export default function ModuleList({ modules: initialModules, year, canEdit, use
                             // View Mode
                             <Link href={`/dashboard/module/${module.id}`}>
                                 <CardContent className="p-6">
-                                    <div className="flex items-start justify-between mb-3">
-                                        <Badge variant="outline" className="font-mono text-[#1B61D9] border-[#1B61D9]">
-                                            {module.code}
-                                        </Badge>
+                                    <div className="flex items-center justify-between mb-3 gap-2">
+                                        <div className="flex items-center gap-2">
+                                            <Badge variant="outline" className="font-mono text-[#1B61D9] border-[#1B61D9]">
+                                                {module.code}
+                                            </Badge>
+                                            <Badge variant="secondary" className="text-xs">
+                                                Sem {module.semester}
+                                            </Badge>
+                                        </div>
                                         <ChevronRight className="h-5 w-5 text-gray-300 group-hover:text-[#1B61D9] transition-colors" />
                                     </div>
+
+                                    {canEditModuleAtSemester(currentSemester, module.semester) ? (
+                                        <Badge className="mb-3 bg-green-100 text-green-700 hover:bg-green-100">
+                                            Unlocked
+                                        </Badge>
+                                    ) : (
+                                        <Badge className="mb-3 bg-orange-100 text-orange-700 hover:bg-orange-100">
+                                            <Lock className="h-3 w-3 mr-1" />
+                                            Locked Until Sem {module.semester}
+                                        </Badge>
+                                    )}
+
                                     <h3 className="font-semibold text-[#161616] group-hover:text-[#1B61D9] transition-colors">
                                         {module.name}
                                     </h3>
                                     <p className="text-sm text-gray-500 mt-2">
-                                        {canEdit ? 'Click to view/edit content' : 'Click to view'}
+                                        {canEditModuleAtSemester(currentSemester, module.semester)
+                                            ? 'Click to view or edit content'
+                                            : 'Click to view content'}
                                     </p>
                                 </CardContent>
                             </Link>
                         )}
 
                         {/* Edit/Delete buttons (only show when not editing and canEdit) */}
-                        {canEdit && editingId !== module.id && (
+                        {canEdit && canEditModuleAtSemester(currentSemester, module.semester) && editingId !== module.id && (
                             <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
                                 <Button
                                     onClick={(e) => { e.preventDefault(); startEdit(module) }}
