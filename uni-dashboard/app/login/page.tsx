@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
-import { sanitizeText, sanitizeEmail } from '@/utils/sanitize'
+import { sanitizeText } from '@/utils/sanitize'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -11,6 +11,7 @@ import { Card, CardHeader, CardContent, CardFooter, CardTitle, CardDescription }
 import { Loader2, GraduationCap, ArrowLeft, Eye, EyeOff } from 'lucide-react'
 import BackgroundAnimation from '@/components/background-animation'
 import Link from 'next/link'
+import { getAcademicYearFromBatchNumber, getStartingSemesterForBatch } from '@/lib/academic'
 
 export default function LoginPage() {
     const [indexNumber, setIndexNumber] = useState('')
@@ -30,7 +31,7 @@ export default function LoginPage() {
 
         const batchNum = parseInt(match[1])
         const degreeCode = match[2]
-        const currentYear = 25 - batchNum
+        const currentYear = getAcademicYearFromBatchNumber(batchNum)
 
         let degree = 'AI'
         let batchCode = `AI_Batch_${batchNum}`
@@ -123,13 +124,13 @@ export default function LoginPage() {
                 return
             }
 
-            const { data: newBatch, error: createError } = await supabase
+            const { error: createError } = await supabase
                 .from('batches')
                 .insert({
                     batch_code: parsed.batchCode,
                     degree_id: degreeData.id,
                     batch_number: parsed.batchNum,
-                    current_semester: parsed.currentYear * 2 - 1
+                    current_semester: getStartingSemesterForBatch(parsed.batchNum)
                 })
                 .select('id')
                 .single()

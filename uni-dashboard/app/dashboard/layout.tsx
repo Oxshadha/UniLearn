@@ -32,6 +32,7 @@ export default async function DashboardLayout({
             <DashboardSidebar
                 profile={profile}
                 batchInfo={batchInfo}
+                currentSemester={batchInfo?.current_semester}
                 userYear={userYear}
                 signOutAction={signOut}
             />

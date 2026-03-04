@@ -24,7 +24,13 @@ export default function ModuleEditorWrapper({
     const [selectedBatch, setSelectedBatch] = useState<number>(userBatchNumber)
     const [availableBatches, setAvailableBatches] = useState<BatchInfo[]>([])
     const [defaultBatch, setDefaultBatch] = useState<number>(userBatchNumber)
-    const [contentData, setContentData] = useState<any>(null)
+    const [contentData, setContentData] = useState<{
+        content?: {
+            content_json?: {
+                topics?: unknown[]
+            }
+        } | null
+    } | null>(null)
     const [isLoading, setIsLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
     const [isCloning, setIsCloning] = useState(false)
@@ -126,7 +132,6 @@ export default function ModuleEditorWrapper({
     const isViewingOwnBatch = selectedBatch === userBatchNumber
     const hasTopics = contentData?.content?.content_json?.topics?.length > 0
     const canEditTopics = isViewingOwnBatch && canEdit
-    const canEditPapersAndCA = canEdit // Can always edit if user can edit
 
     return (
         <div className="space-y-4">
@@ -163,7 +168,7 @@ export default function ModuleEditorWrapper({
                 <Alert className="bg-blue-50 border-blue-200">
                     <Info className="h-4 w-4 text-blue-600" />
                     <AlertDescription className="text-blue-800 text-sm">
-                        <strong>Viewing Batch {selectedBatch}</strong> • Topics are read-only. Past Papers & CA are editable.
+                        <strong>Viewing Batch {selectedBatch}</strong> • This version is read-only. Clone it into your batch to make changes.
                     </AlertDescription>
                 </Alert>
             )}

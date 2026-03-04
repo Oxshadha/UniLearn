@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { ChevronRight, History, Clock, User } from 'lucide-react'
+import { getYearFromSemester } from '@/lib/academic'
 
 interface HistoryLog {
     id: string
@@ -31,12 +32,12 @@ export default async function HistoryPage() {
     // Get user's profile with batch info
     const { data: profile } = await supabase
         .from('profiles')
-        .select('*, batches(batch_code, batch_number)')
+        .select('*, batches(batch_code, batch_number, current_semester)')
         .eq('id', user.id)
         .single()
 
     const batchInfo = profile?.batches
-    const userYear = batchInfo?.batch_number ? 25 - batchInfo.batch_number : 1
+    const userYear = getYearFromSemester(batchInfo?.current_semester)
 
     if (!batchInfo?.batch_number) {
         return <div>No batch assigned</div>
@@ -88,7 +89,7 @@ export default async function HistoryPage() {
                     Edit History
                 </h1>
                 <p className="text-gray-500 mt-1">
-                    Your Year 1-{userYear} module edit history ({batchInfo?.batch_code})
+                    Your batch history for currently unlocked modules ({batchInfo?.batch_code})
                 </p>
             </div>
 

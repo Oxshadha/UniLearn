@@ -7,13 +7,19 @@ import { Home, BookOpen, History, GraduationCap, User, LogOut, Menu, X } from 'l
 import { Button } from '@/components/ui/button'
 
 interface DashboardSidebarProps {
-    profile: any
-    batchInfo: any
+    profile: {
+        index_number?: string
+    } | null
+    batchInfo: {
+        batch_code?: string
+        current_semester?: number
+    } | null
+    currentSemester?: number
     userYear: number
     signOutAction: () => Promise<void>
 }
 
-export default function DashboardSidebar({ profile, batchInfo, userYear, signOutAction }: DashboardSidebarProps) {
+export default function DashboardSidebar({ profile, batchInfo, currentSemester, userYear, signOutAction }: DashboardSidebarProps) {
     const [isOpen, setIsOpen] = useState(false)
     const pathname = usePathname()
 
@@ -106,7 +112,7 @@ export default function DashboardSidebar({ profile, batchInfo, userYear, signOut
                             {profile?.index_number || 'Student'}
                         </p>
                         <p className="text-xs text-gray-500">
-                            {batchInfo ? `Year ${userYear} | ${batchInfo.batch_code?.split('_')[0]}` : 'No batch'}
+                            {batchInfo ? `Semester ${currentSemester || 0} | Year ${userYear} | ${batchInfo.batch_code?.split('_')[0]}` : 'No batch'}
                         </p>
                     </div>
                 </div>
