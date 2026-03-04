@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
-import { sanitizeText } from '@/utils/sanitize'
+import { containsSqlInjection, sanitizeText } from '@/utils/sanitize'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -23,6 +23,46 @@ export default function LoginPage() {
     const supabase = createClient()
 
     const getStudentEmail = (index: string) => `${index.trim().toLowerCase()}@student.unilearn.edu`
+    const indexPattern = /^\d{6}[A-Za-z]$/
+    const passwordPattern = /^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_\-+=[\]{};:'",.<>/?\\|`~])[A-Za-z\d!@#$%^&*()_\-+=[\]{};:'",.<>/?\\|`~]{8,}$/
+    const scriptPattern = /<|>|script|javascript:/i
+
+    const validateCredentials = (index: string, passwordValue: string) => {
+        const cleanIndex = index.trim().toUpperCase()
+
+        if (!indexPattern.test(cleanIndex)) {
+            return {
+                valid: false,
+                error: 'Index number must be in the format 235550X.'
+            }
+        }
+
+        if (containsSqlInjection(cleanIndex) || scriptPattern.test(cleanIndex)) {
+            return {
+                valid: false,
+                error: 'Invalid characters detected in index number.'
+            }
+        }
+
+        if (containsSqlInjection(passwordValue) || scriptPattern.test(passwordValue)) {
+            return {
+                valid: false,
+                error: 'Invalid characters detected in password.'
+            }
+        }
+
+        if (!passwordPattern.test(passwordValue)) {
+            return {
+                valid: false,
+                error: 'Password must be at least 8 characters and include an uppercase letter, a number, and an ASCII special character. Emojis and spaces are not allowed.'
+            }
+        }
+
+        return {
+            valid: true,
+            cleanIndex
+        }
+    }
 
     // Parse index to extract batch info
     const parseIndex = (index: string) => {
@@ -57,7 +97,14 @@ export default function LoginPage() {
         setLoading(true)
         setError(null)
 
-        const cleanIndex = indexNumber.trim().toUpperCase()
+        const validation = validateCredentials(indexNumber, password)
+        if (!validation.valid) {
+            setError(validation.error)
+            setLoading(false)
+            return
+        }
+
+        const cleanIndex = validation.cleanIndex
         const email = getStudentEmail(cleanIndex)
 
         const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
@@ -66,11 +113,7 @@ export default function LoginPage() {
         })
 
         if (authError) {
-            if (authError.message.toLowerCase().includes('invalid login credentials')) {
-                setError(`Login failed for ${email}. Check the index number and password, or use Register if this account does not exist yet.`)
-            } else {
-                setError(authError.message)
-            }
+            setError(authError.message)
             setLoading(false)
             return
         }
@@ -102,7 +145,14 @@ export default function LoginPage() {
         setLoading(true)
         setError(null)
 
-        const cleanIndex = indexNumber.trim().toUpperCase()
+        const validation = validateCredentials(indexNumber, password)
+        if (!validation.valid) {
+            setError(validation.error)
+            setLoading(false)
+            return
+        }
+
+        const cleanIndex = validation.cleanIndex
         const parsed = parseIndex(cleanIndex)
 
         if (!parsed) {
@@ -118,7 +168,7 @@ export default function LoginPage() {
             .maybeSingle()
 
         if (existingProfile) {
-            setError(`A profile already exists for ${cleanIndex}. If you deleted the user manually, also remove the matching auth.users row for ${getStudentEmail(cleanIndex)}.`)
+            setError('User already registered')
             setLoading(false)
             return
         }
@@ -188,11 +238,7 @@ export default function LoginPage() {
         })
 
         if (signUpError) {
-            if (signUpError.message.toLowerCase().includes('user already registered')) {
-                setError(`Supabase Auth already has an account for ${email}. Delete the row from auth.users or sign in instead.`)
-            } else {
-                setError(signUpError.message)
-            }
+            setError(signUpError.message)
             setLoading(false)
             return
         }
@@ -253,7 +299,11 @@ export default function LoginPage() {
                                 onChange={(e) => setIndexNumber(sanitizeText(e.target.value))}
                                 required
                                 className="uppercase text-center text-lg font-mono tracking-wider h-12 border-2 border-gray-200 focus:border-[#1B61D9] focus:ring-[#1B61D9]"
-                                maxLength={10}
+                                maxLength={7}
+                                pattern="\d{6}[A-Za-z]"
+                                title="Use the format 235550X"
+                                inputMode="text"
+                                autoComplete="username"
                             />
                         </div>
                         <div className="space-y-2">
@@ -266,6 +316,10 @@ export default function LoginPage() {
                                     onChange={(e) => setPassword(e.target.value)}
                                     required
                                     className="h-12 border-2 border-gray-200 focus:border-[#1B61D9] focus:ring-[#1B61D9] text-center pr-12"
+                                    minLength={8}
+                                    pattern="(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_\-+=[\]{};:'&quot;,.&lt;&gt;/?\\|`~])[A-Za-z\d!@#$%^&*()_\-+=[\]{};:'&quot;,.&lt;&gt;/?\\|`~]{8,}"
+                                    title="Minimum 8 characters with an uppercase letter, a number, and an ASCII special character. No spaces or emojis."
+                                    autoComplete="current-password"
                                 />
                                 <button
                                     type="button"
@@ -307,11 +361,6 @@ export default function LoginPage() {
                     <p className="text-xs text-center text-gray-500 px-4">
                         Your batch and year will be automatically detected from your Index Number
                     </p>
-                    {indexNumber.trim() && (
-                        <p className="text-xs text-center text-gray-400 px-4">
-                            Login email: {getStudentEmail(indexNumber.trim().toUpperCase())}
-                        </p>
-                    )}
                 </CardFooter>
             </Card>
         </div>
