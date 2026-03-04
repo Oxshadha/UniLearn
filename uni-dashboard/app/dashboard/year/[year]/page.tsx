@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
 import { ChevronRight } from 'lucide-react'
 import ModuleList from '@/components/module-list'
+import { getYearFromSemester } from '@/lib/academic'
 
 export default async function YearPage({
     params,
@@ -17,11 +18,11 @@ export default async function YearPage({
     const { data: { user } } = await supabase.auth.getUser()
     const { data: profile } = await supabase
         .from('profiles')
-        .select('*, batches(batch_number)')
+        .select('*, batches(current_semester)')
         .eq('id', user?.id)
         .single()
 
-    const userYear = profile?.batches?.batch_number ? 25 - profile.batches.batch_number : 0
+    const userYear = getYearFromSemester(profile?.batches?.current_semester)
     const canEdit = year <= userYear
 
     // Fetch modules for this year

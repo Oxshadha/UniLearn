@@ -1,7 +1,8 @@
 import { createClient } from '@/utils/supabase/server'
 import Link from 'next/link'
 import { Card, CardContent } from '@/components/ui/card'
-import { BookOpen, Clock, Users, TrendingUp } from 'lucide-react'
+import { BookOpen, Clock, TrendingUp } from 'lucide-react'
+import { getYearFromSemester } from '@/lib/academic'
 
 export default async function DashboardHome() {
     const supabase = await createClient()
@@ -15,7 +16,7 @@ export default async function DashboardHome() {
         .single()
 
     const batchInfo = profile?.batches
-    const userYear = batchInfo?.batch_number ? 25 - batchInfo.batch_number : 0
+    const userYear = getYearFromSemester(batchInfo?.current_semester)
     const greeting = getGreeting()
 
     // Get module counts

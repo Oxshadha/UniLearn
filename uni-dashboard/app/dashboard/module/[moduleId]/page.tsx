@@ -2,8 +2,9 @@ import { createClient } from '@/utils/supabase/server'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
-import { ChevronRight, History, User } from 'lucide-react'
+import { ChevronRight, History } from 'lucide-react'
 import ModuleEditorWrapper from '@/components/module-editor-wrapper'
+import { canEditModuleAtSemester, getYearFromSemester } from '@/lib/academic'
 
 export default async function ModulePage({
     params,
@@ -35,12 +36,21 @@ export default async function ModulePage({
         .eq('id', user.id)
         .single()
 
-    const userBatch = profile?.batches as any
-    const userBatchNumber = userBatch?.batch_number || 24 // Default to 24 if no batch
+    const userBatch = profile?.batches as {
+        id: string
+        current_semester: number
+        batch_code: string
+        batch_number: number
+    } | null
 
-    // Check Permissions: User's year must >= module's year
-    const userYear = userBatchNumber ? 25 - userBatchNumber : 1
-    const canEdit = moduleData.year <= userYear
+    if (!userBatch) {
+        return <div>No batch assigned</div>
+    }
+
+    const userBatchNumber = userBatch.batch_number
+    const currentSemester = userBatch.current_semester
+    const userYear = getYearFromSemester(currentSemester)
+    const canEdit = canEditModuleAtSemester(currentSemester, moduleData.semester)
 
     return (
         <div className="space-y-6">
@@ -80,7 +90,7 @@ export default async function ModulePage({
 
                 {!canEdit && (
                     <p className="text-sm text-orange-600 mt-2 bg-orange-50 p-3 rounded-lg">
-                        You are in Year {userYear}. Only Year {moduleData.year} (and above) students can edit this module.
+                        You are in Semester {currentSemester} (Year {userYear}). This module becomes editable in Semester {moduleData.semester}.
                     </p>
                 )}
             </div>

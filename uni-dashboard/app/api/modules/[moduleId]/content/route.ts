@@ -149,114 +149,26 @@ export async function POST(
             )
         }
 
-        const { data: existingContentVersion } = await supabase
-            .from('module_content_versions')
-            .select('id, content_json, lecturer_name')
-            .eq('module_id', moduleId)
-            .eq('batch_number', batchNumber)
-            .maybeSingle()
+        const { data, error } = await supabase.rpc('save_module_bundle', {
+            p_module_id: moduleId,
+            p_batch_number: batchNumber,
+            p_content_json: contentJson ?? null,
+            p_past_paper_structure: pastPaperStructure ?? null,
+            p_continuous_assessments: continuousAssessments ?? null,
+            p_lecturer_name: lecturerName ?? null
+        })
 
-        const nextContentJson = contentJson ?? existingContentVersion?.content_json ?? {
-            topics: [],
-            additionalNotes: ''
-        }
-        const nextLecturerName = lecturerName ?? existingContentVersion?.lecturer_name ?? null
-
-        const { data: savedContentVersion, error: contentError } = await supabase
-            .from('module_content_versions')
-            .upsert({
-                module_id: moduleId,
-                batch_number: batchNumber,
-                content_json: nextContentJson,
-                lecturer_name: nextLecturerName,
-                updated_by: user.id,
-                created_by: user.id
-            }, {
-                onConflict: 'module_id,batch_number'
-            })
-            .select('id, content_json')
-            .single()
-
-        if (contentError) {
-            console.error('Error saving content:', contentError)
-            return NextResponse.json({ error: contentError.message }, { status: 500 })
+        if (error) {
+            console.error('Error saving module bundle:', error)
+            const status = error.message.includes('own batch') || error.message.includes('Profile is missing')
+                ? 403
+                : error.message.includes('Unauthorized')
+                    ? 401
+                    : 500
+            return NextResponse.json({ error: error.message }, { status })
         }
 
-        // Save/update past paper structure
-        if (pastPaperStructure) {
-            const { error: paperError } = await supabase
-                .from('past_paper_structures')
-                .upsert({
-                    module_id: moduleId,
-                    batch_number: batchNumber,
-                    structure_json: pastPaperStructure,
-                    updated_by: user.id,
-                    created_by: user.id
-                }, {
-                    onConflict: 'module_id,batch_number'
-                })
-
-            if (paperError) {
-                console.error('Error saving paper structure:', paperError)
-                return NextResponse.json({ error: paperError.message }, { status: 500 })
-            }
-        }
-
-        // Save/update continuous assessments
-        if (continuousAssessments && Array.isArray(continuousAssessments)) {
-            // Delete existing CAs for this batch
-            const { error: deleteCaError } = await supabase
-                .from('continuous_assessments')
-                .delete()
-                .eq('module_id', moduleId)
-                .eq('batch_number', batchNumber)
-
-            if (deleteCaError) {
-                console.error('Error clearing CAs:', deleteCaError)
-                return NextResponse.json({ error: deleteCaError.message }, { status: 500 })
-            }
-
-            // Insert new CAs
-            if (continuousAssessments.length > 0) {
-                const casToInsert = continuousAssessments.map(ca => ({
-                    module_id: moduleId,
-                    batch_number: batchNumber,
-                    ca_number: ca.caNumber,
-                    ca_type: ca.type,
-                    ca_weight: ca.weight,
-                    description: ca.description
-                }))
-
-                const { error: caError } = await supabase
-                    .from('continuous_assessments')
-                    .insert(casToInsert)
-
-                if (caError) {
-                    console.error('Error saving CAs:', caError)
-                    return NextResponse.json({ error: caError.message }, { status: 500 })
-                }
-            }
-        }
-
-        const { error: logError } = await supabase
-            .from('edit_logs')
-            .insert({
-                module_content_version_id: savedContentVersion.id,
-                module_id: moduleId,
-                batch_number: batchNumber,
-                edited_by: user.id,
-                edited_by_index: profile.index_number,
-                action_type: 'save',
-                content_snapshot: savedContentVersion.content_json,
-                edit_reason: 'Saved module content'
-            })
-
-        if (logError) {
-            console.error('Error writing edit log:', logError)
-            return NextResponse.json({ error: logError.message }, { status: 500 })
-        }
-
-        return NextResponse.json({ success: true })
+        return NextResponse.json(data ?? { success: true })
 
     } catch (error) {
         console.error('Error saving batch content:', error)
