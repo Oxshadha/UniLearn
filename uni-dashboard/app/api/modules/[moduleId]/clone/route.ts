@@ -79,10 +79,14 @@ export async function POST(
             console.error('Error cloning module bundle:', error)
             const status = error.message.includes('No source content')
                 ? 404
-                : error.message.includes('own batch') || error.message.includes('Profile is missing')
+                : error.message.includes('own batch')
+                    || error.message.includes('Profile is missing')
+                    || error.message.includes('locked until your batch reaches semester')
                     ? 403
                     : error.message.includes('Unauthorized')
                         ? 401
+                        : error.message.includes('Module not found')
+                            ? 404
                         : 500
             return NextResponse.json({ error: error.message }, { status })
         }

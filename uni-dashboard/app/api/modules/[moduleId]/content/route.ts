@@ -160,10 +160,14 @@ export async function POST(
 
         if (error) {
             console.error('Error saving module bundle:', error)
-            const status = error.message.includes('own batch') || error.message.includes('Profile is missing')
+            const status = error.message.includes('own batch')
+                || error.message.includes('Profile is missing')
+                || error.message.includes('locked until your batch reaches semester')
                 ? 403
                 : error.message.includes('Unauthorized')
                     ? 401
+                    : error.message.includes('Module not found')
+                        ? 404
                     : 500
             return NextResponse.json({ error: error.message }, { status })
         }

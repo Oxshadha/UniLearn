@@ -260,7 +260,9 @@ RETURNS jsonb AS $$
 DECLARE
   v_user_id uuid;
   v_user_batch_number int;
+  v_user_current_semester int;
   v_user_index text;
+  v_module_semester int;
   v_existing_content_json jsonb;
   v_existing_lecturer_name text;
   v_saved_version_id uuid;
@@ -273,8 +275,8 @@ BEGIN
     RAISE EXCEPTION 'Unauthorized';
   END IF;
 
-  SELECT p.index_number, b.batch_number
-  INTO v_user_index, v_user_batch_number
+  SELECT p.index_number, b.batch_number, b.current_semester
+  INTO v_user_index, v_user_batch_number, v_user_current_semester
   FROM profiles p
   JOIN batches b ON b.id = p.batch_id
   WHERE p.id = v_user_id;
@@ -285,6 +287,19 @@ BEGIN
 
   IF v_user_batch_number <> p_batch_number THEN
     RAISE EXCEPTION 'You can only edit content for your own batch';
+  END IF;
+
+  SELECT semester
+  INTO v_module_semester
+  FROM modules
+  WHERE id = p_module_id;
+
+  IF v_module_semester IS NULL THEN
+    RAISE EXCEPTION 'Module not found';
+  END IF;
+
+  IF v_user_current_semester < v_module_semester THEN
+    RAISE EXCEPTION 'This module is locked until your batch reaches semester %', v_module_semester;
   END IF;
 
   SELECT content_json, lecturer_name
@@ -409,7 +424,9 @@ RETURNS jsonb AS $$
 DECLARE
   v_user_id uuid;
   v_user_batch_number int;
+  v_user_current_semester int;
   v_user_index text;
+  v_module_semester int;
   v_source_content module_content_versions%ROWTYPE;
   v_source_paper past_paper_structures%ROWTYPE;
   v_source_ca record;
@@ -423,8 +440,8 @@ BEGIN
     RAISE EXCEPTION 'Unauthorized';
   END IF;
 
-  SELECT p.index_number, b.batch_number
-  INTO v_user_index, v_user_batch_number
+  SELECT p.index_number, b.batch_number, b.current_semester
+  INTO v_user_index, v_user_batch_number, v_user_current_semester
   FROM profiles p
   JOIN batches b ON b.id = p.batch_id
   WHERE p.id = v_user_id;
@@ -435,6 +452,19 @@ BEGIN
 
   IF v_user_batch_number <> p_to_batch THEN
     RAISE EXCEPTION 'You can only clone to your own batch';
+  END IF;
+
+  SELECT semester
+  INTO v_module_semester
+  FROM modules
+  WHERE id = p_module_id;
+
+  IF v_module_semester IS NULL THEN
+    RAISE EXCEPTION 'Module not found';
+  END IF;
+
+  IF v_user_current_semester < v_module_semester THEN
+    RAISE EXCEPTION 'This module is locked until your batch reaches semester %', v_module_semester;
   END IF;
 
   SELECT *
