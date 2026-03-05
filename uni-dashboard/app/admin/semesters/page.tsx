@@ -1,16 +1,26 @@
 import { createClient } from '@/utils/supabase/server'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { redirect } from 'next/navigation'
+import Link from 'next/link'
 
 export default async function AdminSemesterUpdate() {
     const supabase = await createClient()
 
-    // Check if user is admin (you can add admin role check here)
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) redirect('/login')
 
-    // Fetch current batch status
+    const { data: profile } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', user.id)
+        .single()
+
+    if (profile?.role !== 'admin') {
+        redirect('/dashboard')
+    }
+
     const { data: batches } = await supabase
         .from('batches')
         .select('*')
@@ -22,40 +32,80 @@ export default async function AdminSemesterUpdate() {
         await supabase.rpc('increment_batch_semester', { batch_id: batchId })
     }
 
+    async function setSemester(formData: FormData) {
+        'use server'
+        const supabase = await createClient()
+
+        const batchId = String(formData.get('batchId') || '')
+        const value = Number.parseInt(String(formData.get('semester') || ''), 10)
+        const semester = Number.isNaN(value) ? 1 : Math.max(1, Math.min(8, value))
+
+        await supabase
+            .from('batches')
+            .update({ current_semester: semester })
+            .eq('id', batchId)
+    }
+
     return (
-        <div className="p-8 max-w-4xl mx-auto">
+        <div className="p-8 max-w-5xl mx-auto space-y-6">
+            <div className="flex items-center justify-between">
+                <div>
+                    <h1 className="text-2xl font-bold text-[#161616]">Semester Management</h1>
+                    <p className="text-sm text-gray-600 mt-1">Admin-only controls for batch progression.</p>
+                </div>
+                <Button asChild variant="outline">
+                    <Link href="/admin">Back to Admin</Link>
+                </Button>
+            </div>
+
             <Card>
                 <CardHeader>
-                    <CardTitle>Semester Management - Admin Only</CardTitle>
+                    <CardTitle>Batch Semester Controls</CardTitle>
                     <p className="text-sm text-gray-600">
-                        Click the buttons below to advance each batch to the next semester
+                        Set exact semester manually (1-8) or advance by +1.
                     </p>
                 </CardHeader>
                 <CardContent>
                     <div className="space-y-3">
                         {batches?.map((batch) => (
-                            <div key={batch.id} className="flex items-center justify-between p-4 border rounded-lg">
-                                <div>
+                            <div key={batch.id} className="flex flex-col gap-4 p-4 border rounded-lg md:flex-row md:items-center md:justify-between">
+                                <div className="min-w-[220px]">
                                     <p className="font-semibold">Batch {batch.batch_number}</p>
                                     <p className="text-sm text-gray-600">
                                         Current: Semester {batch.current_semester} (Year {Math.ceil(batch.current_semester / 2)})
                                     </p>
                                 </div>
-                                <form action={incrementSemester.bind(null, batch.id)}>
-                                    <Button type="submit" size="sm">
-                                        → Semester {batch.current_semester + 1}
-                                    </Button>
-                                </form>
+                                <div className="flex flex-col gap-2 md:flex-row md:items-center">
+                                    <form action={setSemester} className="flex items-center gap-2">
+                                        <input type="hidden" name="batchId" value={batch.id} />
+                                        <Input
+                                            type="number"
+                                            name="semester"
+                                            min={1}
+                                            max={8}
+                                            defaultValue={batch.current_semester}
+                                            className="w-24"
+                                        />
+                                        <Button type="submit" size="sm" variant="outline">
+                                            Set
+                                        </Button>
+                                    </form>
+                                    <form action={incrementSemester.bind(null, batch.id)}>
+                                        <Button type="submit" size="sm" style={{ backgroundColor: '#1B61D9' }}>
+                                            Advance +1
+                                        </Button>
+                                    </form>
+                                </div>
                             </div>
                         ))}
                     </div>
 
                     <div className="mt-6 p-4 bg-blue-50 rounded-lg">
                         <p className="text-sm text-blue-800">
-                            <strong>When to update:</strong> At the end of each semester (usually June and December)
+                            <strong>Guideline:</strong> Update at semester transitions. Use manual set when academic schedules shift.
                         </p>
                         <p className="text-xs text-blue-600 mt-2">
-                            Click the button for each batch to move them to the next semester
+                            Semester gating is enforced in backend for content and past-paper actions.
                         </p>
                     </div>
                 </CardContent>

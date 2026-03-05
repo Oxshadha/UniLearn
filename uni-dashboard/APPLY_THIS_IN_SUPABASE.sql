@@ -103,6 +103,41 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+CREATE OR REPLACE FUNCTION can_manage_past_papers_for_module(p_module_id uuid, p_target_batch int)
+RETURNS boolean AS $$
+DECLARE
+  user_batch_number int;
+  target_current_semester int;
+  module_semester int;
+  module_deleted_at timestamptz;
+BEGIN
+  SELECT b.batch_number INTO user_batch_number
+  FROM profiles p
+  JOIN batches b ON b.id = p.batch_id
+  WHERE p.id = auth.uid();
+
+  SELECT current_semester INTO target_current_semester
+  FROM batches
+  WHERE batch_number = p_target_batch;
+
+  SELECT semester, deleted_at
+  INTO module_semester, module_deleted_at
+  FROM modules
+  WHERE id = p_module_id;
+
+  IF module_semester IS NULL OR module_deleted_at IS NOT NULL THEN
+    RETURN false;
+  END IF;
+
+  IF target_current_semester IS NULL OR target_current_semester < module_semester THEN
+    RETURN false;
+  END IF;
+
+  RETURN user_batch_number = p_target_batch
+    OR user_batch_number = p_target_batch + 1;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 -- =====================================================
 -- 5. Update viewability helper to allow all-batch read access
 -- =====================================================
@@ -235,10 +270,10 @@ CREATE POLICY "Read viewable batch downloads" ON past_paper_downloads
 
 CREATE POLICY "Manage allowed batch papers" ON past_paper_downloads
   FOR ALL USING (
-    can_manage_past_papers(batch_number)
+    can_manage_past_papers_for_module(module_id, batch_number)
   )
   WITH CHECK (
-    can_manage_past_papers(batch_number)
+    can_manage_past_papers_for_module(module_id, batch_number)
   );
 
 CREATE POLICY "Read own batch notifications" ON batch_notifications

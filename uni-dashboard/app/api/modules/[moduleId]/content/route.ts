@@ -32,6 +32,9 @@ interface ProfileBatchDetailsRow {
     } | null
 }
 
+const canManageTargetBatchPapers = (userBatchNumber: number, targetBatchNumber: number) =>
+    userBatchNumber === targetBatchNumber || userBatchNumber === targetBatchNumber + 1
+
 /**
  * GET /api/modules/[moduleId]/content?batch=24
  * Fetch module content for a specific batch
@@ -240,8 +243,35 @@ export async function DELETE(
         }
 
         const userBatchNumber = profile.batches.batch_number
-        if (!(userBatchNumber === batchNumber || userBatchNumber === batchNumber + 1)) {
+        if (!canManageTargetBatchPapers(userBatchNumber, batchNumber)) {
             return NextResponse.json({ error: 'You do not have permission to modify these past papers' }, { status: 403 })
+        }
+
+        const { data: moduleRow, error: moduleError } = await supabase
+            .from('modules')
+            .select('semester, deleted_at')
+            .eq('id', moduleId)
+            .single()
+
+        if (moduleError || !moduleRow || moduleRow.deleted_at) {
+            return NextResponse.json({ error: 'Module not found' }, { status: 404 })
+        }
+
+        const { data: targetBatch, error: batchError } = await supabase
+            .from('batches')
+            .select('current_semester')
+            .eq('batch_number', batchNumber)
+            .single()
+
+        if (batchError || !targetBatch) {
+            return NextResponse.json({ error: 'Target batch not found' }, { status: 404 })
+        }
+
+        if (targetBatch.current_semester < moduleRow.semester) {
+            return NextResponse.json(
+                { error: `Past papers are locked until Batch ${batchNumber} reaches semester ${moduleRow.semester}` },
+                { status: 403 }
+            )
         }
 
         const restoreUntil = new Date(Date.now() + (7 * 24 * 60 * 60 * 1000)).toISOString()

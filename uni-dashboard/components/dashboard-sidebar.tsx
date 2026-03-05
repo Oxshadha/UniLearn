@@ -3,12 +3,13 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Home, BookOpen, Bell, History, GraduationCap, User, LogOut, Menu, X } from 'lucide-react'
+import { Home, BookOpen, Bell, History, GraduationCap, User, LogOut, Menu, Shield, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 interface DashboardSidebarProps {
     profile: {
         index_number?: string
+        role?: string
     } | null
     batchInfo: {
         batch_code?: string
@@ -106,6 +107,20 @@ function SidebarContent({
                 ))}
 
                 <div className="pt-4 mt-4 border-t border-gray-100">
+                    {profile?.role === 'admin' && (
+                        <Link
+                            href="/admin"
+                            onClick={onClose}
+                            className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${pathname?.startsWith('/admin')
+                                ? 'bg-[#f0f4ff] text-[#1B61D9]'
+                                : 'text-gray-600 hover:bg-[#f0f4ff] hover:text-[#1B61D9]'
+                                }`}
+                        >
+                            <Shield className="h-5 w-5" />
+                            <span className="font-medium">Admin Panel</span>
+                        </Link>
+                    )}
+
                     <Link
                         href="/dashboard/notifications"
                         onClick={onClose}
