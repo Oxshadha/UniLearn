@@ -1,9 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Home, BookOpen, History, GraduationCap, User, LogOut, Menu, X } from 'lucide-react'
+import { Home, BookOpen, Bell, History, GraduationCap, User, LogOut, Menu, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 interface DashboardSidebarProps {
@@ -33,6 +33,23 @@ function SidebarContent({
     pathname,
     onClose,
 }: SidebarContentProps) {
+    const [unreadCount, setUnreadCount] = useState(0)
+
+    useEffect(() => {
+        const fetchUnreadCount = async () => {
+            try {
+                const response = await fetch('/api/notifications', { cache: 'no-store' })
+                if (!response.ok) return
+                const data = await response.json()
+                setUnreadCount(typeof data.unreadCount === 'number' ? data.unreadCount : 0)
+            } catch {
+                setUnreadCount(0)
+            }
+        }
+
+        fetchUnreadCount()
+    }, [pathname])
+
     return (
         <div className="flex flex-col h-full bg-white text-[#161616]">
             <div className="p-6 border-b border-gray-100 flex items-center justify-between">
@@ -89,6 +106,23 @@ function SidebarContent({
                 ))}
 
                 <div className="pt-4 mt-4 border-t border-gray-100">
+                    <Link
+                        href="/dashboard/notifications"
+                        onClick={onClose}
+                        className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${pathname === '/dashboard/notifications'
+                            ? 'bg-[#f0f4ff] text-[#1B61D9]'
+                            : 'text-gray-600 hover:bg-[#f0f4ff] hover:text-[#1B61D9]'
+                            }`}
+                    >
+                        <Bell className="h-5 w-5" />
+                        <span className="font-medium">Notifications</span>
+                        {unreadCount > 0 && (
+                            <span className="ml-auto rounded-full bg-[#1B61D9] px-2 py-0.5 text-xs font-semibold text-white">
+                                {unreadCount}
+                            </span>
+                        )}
+                    </Link>
+
                     <Link
                         href="/dashboard/history"
                         onClick={onClose}

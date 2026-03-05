@@ -10,10 +10,13 @@ DROP FUNCTION IF EXISTS can_edit_module(uuid) CASCADE;
 DROP FUNCTION IF EXISTS get_viewable_batches(int) CASCADE;
 DROP FUNCTION IF EXISTS get_latest_batch_version(uuid, int) CASCADE;
 DROP FUNCTION IF EXISTS can_edit_batch_content(uuid, int) CASCADE;
+DROP FUNCTION IF EXISTS can_manage_past_papers(int) CASCADE;
 DROP FUNCTION IF EXISTS purge_expired_modules() CASCADE;
 
 -- Drop tables (CASCADE handles policies automatically)
 DROP TABLE IF EXISTS past_paper_downloads CASCADE;
+DROP TABLE IF EXISTS notification_reads CASCADE;
+DROP TABLE IF EXISTS batch_notifications CASCADE;
 DROP TABLE IF EXISTS continuous_assessments CASCADE;
 DROP TABLE IF EXISTS past_paper_structures CASCADE;
 DROP TABLE IF EXISTS module_content_versions CASCADE;
@@ -196,7 +199,30 @@ CREATE TABLE past_paper_downloads (
 );
 
 -- =====================================================
--- 9. EDIT LOGS (Version History)
+-- 9. BATCH NOTIFICATIONS
+-- =====================================================
+CREATE TABLE batch_notifications (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  batch_number int NOT NULL,
+  module_id uuid REFERENCES modules(id) ON DELETE CASCADE,
+  event_type text NOT NULL CHECK (event_type IN ('save', 'clone', 'module_created', 'module_deleted', 'module_restored')),
+  message text NOT NULL,
+  actor_id uuid REFERENCES profiles(id),
+  actor_index text,
+  metadata jsonb DEFAULT '{}'::jsonb,
+  created_at timestamptz DEFAULT now()
+);
+
+CREATE TABLE notification_reads (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  notification_id uuid REFERENCES batch_notifications(id) ON DELETE CASCADE NOT NULL,
+  user_id uuid REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
+  read_at timestamptz DEFAULT now(),
+  UNIQUE(notification_id, user_id)
+);
+
+-- =====================================================
+-- 10. EDIT LOGS (Version History)
 -- =====================================================
 CREATE TABLE edit_logs (
   id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -261,6 +287,23 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+-- Function to check if user can manage past papers for a target batch
+-- Own batch and immediate junior batch are allowed (e.g., batch 24 can manage batch 23 papers)
+CREATE OR REPLACE FUNCTION can_manage_past_papers(p_target_batch int)
+RETURNS boolean AS $$
+DECLARE
+  user_batch_number int;
+BEGIN
+  SELECT b.batch_number INTO user_batch_number
+  FROM profiles p
+  JOIN batches b ON b.id = p.batch_id
+  WHERE p.id = auth.uid();
+
+  RETURN user_batch_number = p_target_batch
+    OR user_batch_number = p_target_batch + 1;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 -- Transactional save for a batch-owned module bundle
 CREATE OR REPLACE FUNCTION save_module_bundle(
   p_module_id uuid,
@@ -278,6 +321,8 @@ DECLARE
   v_user_index text;
   v_module_semester int;
   v_module_deleted_at timestamptz;
+  v_module_code text;
+  v_module_name text;
   v_existing_content_json jsonb;
   v_existing_lecturer_name text;
   v_saved_version_id uuid;
@@ -304,8 +349,8 @@ BEGIN
     RAISE EXCEPTION 'You can only edit content for your own batch';
   END IF;
 
-  SELECT semester, deleted_at
-  INTO v_module_semester, v_module_deleted_at
+  SELECT semester, deleted_at, code, name
+  INTO v_module_semester, v_module_deleted_at, v_module_code, v_module_name
   FROM modules
   WHERE id = p_module_id;
 
@@ -435,6 +480,29 @@ BEGIN
     'Saved module content'
   );
 
+  INSERT INTO batch_notifications (
+    batch_number,
+    module_id,
+    event_type,
+    message,
+    actor_id,
+    actor_index,
+    metadata
+  )
+  VALUES (
+    p_batch_number,
+    p_module_id,
+    'save',
+    'Module ' || COALESCE(v_module_code, 'UNKNOWN') || ' updated by ' || v_user_index,
+    v_user_id,
+    v_user_index,
+    jsonb_build_object(
+      'moduleCode', v_module_code,
+      'moduleName', v_module_name,
+      'action', 'save'
+    )
+  );
+
   RETURN jsonb_build_object(
     'success', true,
     'moduleContentVersionId', v_saved_version_id
@@ -456,6 +524,8 @@ DECLARE
   v_user_index text;
   v_module_semester int;
   v_module_deleted_at timestamptz;
+  v_module_code text;
+  v_module_name text;
   v_source_content module_content_versions%ROWTYPE;
   v_source_paper past_paper_structures%ROWTYPE;
   v_source_ca record;
@@ -483,8 +553,8 @@ BEGIN
     RAISE EXCEPTION 'You can only clone to your own batch';
   END IF;
 
-  SELECT semester, deleted_at
-  INTO v_module_semester, v_module_deleted_at
+  SELECT semester, deleted_at, code, name
+  INTO v_module_semester, v_module_deleted_at, v_module_code, v_module_name
   FROM modules
   WHERE id = p_module_id;
 
@@ -637,6 +707,31 @@ BEGIN
     'Cloned from batch ' || p_from_batch
   );
 
+  INSERT INTO batch_notifications (
+    batch_number,
+    module_id,
+    event_type,
+    message,
+    actor_id,
+    actor_index,
+    metadata
+  )
+  VALUES (
+    p_to_batch,
+    p_module_id,
+    'clone',
+    'Module ' || COALESCE(v_module_code, 'UNKNOWN') || ' cloned from batch ' || p_from_batch || ' by ' || v_user_index,
+    v_user_id,
+    v_user_index,
+    jsonb_build_object(
+      'moduleCode', v_module_code,
+      'moduleName', v_module_name,
+      'action', 'clone',
+      'fromBatch', p_from_batch,
+      'toBatch', p_to_batch
+    )
+  );
+
   RETURN jsonb_build_object(
     'success', true,
     'moduleContentVersionId', v_cloned_version_id,
@@ -709,6 +804,8 @@ ALTER TABLE module_content_versions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE past_paper_structures ENABLE ROW LEVEL SECURITY;
 ALTER TABLE continuous_assessments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE past_paper_downloads ENABLE ROW LEVEL SECURITY;
+ALTER TABLE batch_notifications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE notification_reads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE edit_logs ENABLE ROW LEVEL SECURITY;
 
 -- Degrees: Public Read
@@ -789,7 +886,7 @@ CREATE POLICY "Edit own batch CAs" ON continuous_assessments
     can_edit_batch_content(module_id, batch_number)
   );
 
--- Past Paper Downloads: Read viewable batches, Upload for own batch
+-- Past Paper Downloads: Read viewable batches, manage by own batch + immediate junior batch
 CREATE POLICY "Read viewable batch downloads" ON past_paper_downloads
   FOR SELECT USING (
     deleted_at IS NULL
@@ -801,10 +898,42 @@ CREATE POLICY "Read viewable batch downloads" ON past_paper_downloads
     )
   );
 
-CREATE POLICY "Upload own batch papers" ON past_paper_downloads
-  FOR INSERT WITH CHECK (
-    can_edit_batch_content(module_id, batch_number)
+CREATE POLICY "Manage allowed batch papers" ON past_paper_downloads
+  FOR ALL USING (
+    can_manage_past_papers(batch_number)
+  )
+  WITH CHECK (
+    can_manage_past_papers(batch_number)
   );
+
+-- Batch Notifications: users read only notifications for their own batch
+CREATE POLICY "Read own batch notifications" ON batch_notifications
+  FOR SELECT USING (
+    batch_number = (
+      SELECT b.batch_number
+      FROM profiles p
+      JOIN batches b ON b.id = p.batch_id
+      WHERE p.id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Insert own batch notifications" ON batch_notifications
+  FOR INSERT WITH CHECK (
+    actor_id = auth.uid()
+    AND batch_number = (
+      SELECT b.batch_number
+      FROM profiles p
+      JOIN batches b ON b.id = p.batch_id
+      WHERE p.id = auth.uid()
+    )
+  );
+
+-- Notification Reads: users can read/write only their own read states
+CREATE POLICY "Read own notification reads" ON notification_reads
+  FOR SELECT USING (user_id = auth.uid());
+
+CREATE POLICY "Insert own notification reads" ON notification_reads
+  FOR INSERT WITH CHECK (user_id = auth.uid());
 
 -- Edit Logs: Read logs for viewable batch versions, insert only as self
 CREATE POLICY "Read viewable edit logs" ON edit_logs
@@ -845,6 +974,8 @@ CREATE INDEX idx_past_paper_downloads_purge_after ON past_paper_downloads(purge_
 CREATE UNIQUE INDEX idx_continuous_assessments_active_unique
   ON continuous_assessments(module_id, batch_number, ca_number)
   WHERE deleted_at IS NULL;
+CREATE INDEX idx_batch_notifications_batch_created_at ON batch_notifications(batch_number, created_at DESC);
+CREATE INDEX idx_notification_reads_user_notification ON notification_reads(user_id, notification_id);
 CREATE INDEX idx_profiles_batch_id ON profiles(batch_id);
 CREATE INDEX idx_edit_logs_version_id ON edit_logs(module_content_version_id);
 CREATE INDEX idx_edit_logs_created_at ON edit_logs(created_at DESC);
