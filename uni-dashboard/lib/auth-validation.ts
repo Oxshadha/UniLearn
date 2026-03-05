@@ -4,8 +4,16 @@ const INDEX_PATTERN = /^\d{6}[A-Za-z]$/
 const PASSWORD_PATTERN = /^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_\-+=[\]{};:'",.<>/?\\|`~])[A-Za-z\d!@#$%^&*()_\-+=[\]{};:'",.<>/?\\|`~]{8,}$/
 const SCRIPT_PATTERN = /<|>|script|javascript:/i
 
+export function toCanonicalIndex(index: string) {
+    return index.trim().toUpperCase().slice(0, 6)
+}
+
+export function getIndexNumericPart(index: string) {
+    return index.trim().toUpperCase().slice(0, 6)
+}
+
 export function getStudentEmail(index: string) {
-    return `${index.trim().toLowerCase()}@student.unilearn.edu`
+    return `${toCanonicalIndex(index).toLowerCase()}@student.unilearn.edu`
 }
 
 export function validateIndexNumber(index: string) {
@@ -27,7 +35,8 @@ export function validateIndexNumber(index: string) {
 
     return {
         valid: true,
-        cleanIndex
+        cleanIndex,
+        canonicalIndex: toCanonicalIndex(cleanIndex),
     }
 }
 
@@ -64,6 +73,8 @@ export function validateStudentCredentials(index: string, password: string) {
 
     return {
         valid: true,
-        cleanIndex: indexValidation.cleanIndex
+        cleanIndex: indexValidation.cleanIndex,
+        canonicalIndex: indexValidation.canonicalIndex,
+        numericPart: getIndexNumericPart(indexValidation.cleanIndex),
     }
 }

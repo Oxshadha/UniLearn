@@ -64,7 +64,8 @@ export default function LoginPage() {
         }
 
         const cleanIndex = validation.cleanIndex
-        const email = getStudentEmail(cleanIndex)
+        const numericPart = validation.numericPart
+        const email = getStudentEmail(numericPart)
 
         const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
             email,
@@ -116,6 +117,7 @@ export default function LoginPage() {
         }
 
         const cleanIndex = validation.cleanIndex
+        const numericPart = validation.numericPart
         const parsed = parseIndex(cleanIndex)
 
         if (!parsed) {
@@ -127,10 +129,10 @@ export default function LoginPage() {
         const { data: existingProfile } = await supabase
             .from('profiles')
             .select('id, index_number')
-            .eq('index_number', cleanIndex)
-            .maybeSingle()
+            .ilike('index_number', `${numericPart}%`)
+            .limit(1)
 
-        if (existingProfile) {
+        if (existingProfile && existingProfile.length > 0) {
             setError('User already registered. Click "Sign In" to continue.')
             setLoading(false)
             return
@@ -186,7 +188,7 @@ export default function LoginPage() {
             return
         }
 
-        const email = getStudentEmail(cleanIndex)
+        const email = getStudentEmail(numericPart)
 
         const { data: signupData, error: signUpError } = await supabase.auth.signUp({
             email,
@@ -194,6 +196,7 @@ export default function LoginPage() {
             options: {
                 data: {
                     index_number: cleanIndex,
+                    index_number_raw: cleanIndex,
                     full_name: '',
                     batch_id: finalBatch.id
                 }
