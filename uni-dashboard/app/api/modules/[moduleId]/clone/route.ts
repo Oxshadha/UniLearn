@@ -82,6 +82,7 @@ export async function POST(
                 : error.message.includes('own batch')
                     || error.message.includes('Profile is missing')
                     || error.message.includes('locked until your batch reaches semester')
+                    || error.message.includes('senior batch')
                     ? 403
                     : error.message.includes('Unauthorized')
                         ? 401

@@ -60,13 +60,19 @@ export async function GET(
 
         const userBatchNumber = batchData.batch_number
 
-        // Get viewable batches (current + 3 senior)
-        const viewableBatches = [
-            userBatchNumber,
-            userBatchNumber - 1,
-            userBatchNumber - 2,
-            userBatchNumber - 3
-        ].filter(b => b > 0) // Filter out negative batch numbers
+        // Global view access: all batch versions are visible
+        const { data: batchRows, error: batchRowsError } = await supabase
+            .from('batches')
+            .select('batch_number')
+            .order('batch_number', { ascending: false })
+
+        if (batchRowsError) {
+            return NextResponse.json({ error: batchRowsError.message }, { status: 500 })
+        }
+
+        const viewableBatches = (batchRows || [])
+            .map(row => row.batch_number)
+            .filter((batchNumber): batchNumber is number => Number.isInteger(batchNumber))
 
         // Get all available batch versions for this module
         const { data: contentVersions, error } = await supabase
@@ -139,7 +145,7 @@ export async function GET(
             batchesMap.set(ca.batch_number, batch)
         })
 
-        // Ensure all viewable batches are in the map (even if empty)
+        // Ensure all visible batches are in the map (even if empty)
         viewableBatches.forEach(bn => {
             if (!batchesMap.has(bn)) {
                 batchesMap.set(bn, {

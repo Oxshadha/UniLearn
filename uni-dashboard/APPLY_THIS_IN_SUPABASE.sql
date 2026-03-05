@@ -104,7 +104,23 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- =====================================================
--- 5. Extend edit_logs for the batch-versioned content model
+-- 5. Update viewability helper to allow all-batch read access
+-- =====================================================
+CREATE OR REPLACE FUNCTION get_viewable_batches(student_batch int)
+RETURNS int[] AS $$
+DECLARE
+  all_batches int[];
+BEGIN
+  SELECT COALESCE(array_agg(batch_number ORDER BY batch_number DESC), ARRAY[]::int[])
+  INTO all_batches
+  FROM batches;
+
+  RETURN all_batches;
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+-- =====================================================
+-- 6. Extend edit_logs for the batch-versioned content model
 -- =====================================================
 ALTER TABLE edit_logs
   ADD COLUMN IF NOT EXISTS module_id uuid REFERENCES modules(id) ON DELETE CASCADE,
@@ -119,7 +135,7 @@ ALTER TABLE edit_logs
   CHECK (action_type IN ('save', 'clone'));
 
 -- =====================================================
--- 6. Update policies
+-- 7. Update policies
 -- =====================================================
 DROP POLICY IF EXISTS "Read own edit logs" ON edit_logs;
 DROP POLICY IF EXISTS "Read viewable edit logs" ON edit_logs;
@@ -253,13 +269,13 @@ CREATE POLICY "Insert own notification reads" ON notification_reads
   FOR INSERT WITH CHECK (user_id = auth.uid());
 
 -- =====================================================
--- 7. Add indexes for faster history lookups
+-- 8. Add indexes for faster history lookups
 -- =====================================================
 CREATE INDEX IF NOT EXISTS idx_edit_logs_version_id ON edit_logs(module_content_version_id);
 CREATE INDEX IF NOT EXISTS idx_edit_logs_created_at ON edit_logs(created_at DESC);
 
 -- =====================================================
--- 8. Transactional save RPC
+-- 9. Transactional save RPC
 -- =====================================================
 CREATE OR REPLACE FUNCTION save_module_bundle(
   p_module_id uuid,
@@ -467,7 +483,7 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- =====================================================
--- 7. Transactional clone RPC
+-- 10. Transactional clone RPC
 -- =====================================================
 CREATE OR REPLACE FUNCTION clone_module_bundle(
   p_module_id uuid,
@@ -509,6 +525,10 @@ BEGIN
 
   IF v_user_batch_number <> p_to_batch THEN
     RAISE EXCEPTION 'You can only clone to your own batch';
+  END IF;
+
+  IF p_from_batch >= v_user_batch_number THEN
+    RAISE EXCEPTION 'You can only clone from a senior batch';
   END IF;
 
   SELECT semester, deleted_at, code, name
@@ -700,7 +720,7 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- =====================================================
--- 8. Purge helper for records past the 7-day restore window
+-- 11. Purge helper for records past the 7-day restore window
 -- =====================================================
 CREATE OR REPLACE FUNCTION purge_expired_modules()
 RETURNS int AS $$

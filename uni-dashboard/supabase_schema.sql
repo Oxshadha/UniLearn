@@ -241,13 +241,19 @@ CREATE TABLE edit_logs (
 -- HELPER FUNCTIONS
 -- =====================================================
 
--- Function to get batches a student can view (current + 3 senior)
+-- Function to get all batches a student can view (read-only for everyone)
 CREATE OR REPLACE FUNCTION get_viewable_batches(student_batch int)
 RETURNS int[] AS $$
+DECLARE
+  all_batches int[];
 BEGIN
-  RETURN ARRAY[student_batch, student_batch - 1, student_batch - 2, student_batch - 3];
+  SELECT COALESCE(array_agg(batch_number ORDER BY batch_number DESC), ARRAY[]::int[])
+  INTO all_batches
+  FROM batches;
+
+  RETURN all_batches;
 END;
-$$ LANGUAGE plpgsql IMMUTABLE;
+$$ LANGUAGE plpgsql STABLE;
 
 -- Function to get the most recent updated batch for a module
 CREATE OR REPLACE FUNCTION get_latest_batch_version(p_module_id uuid, student_batch int)
@@ -551,6 +557,10 @@ BEGIN
 
   IF v_user_batch_number <> p_to_batch THEN
     RAISE EXCEPTION 'You can only clone to your own batch';
+  END IF;
+
+  IF p_from_batch >= v_user_batch_number THEN
+    RAISE EXCEPTION 'You can only clone from a senior batch';
   END IF;
 
   SELECT semester, deleted_at, code, name
