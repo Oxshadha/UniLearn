@@ -19,6 +19,7 @@ export default async function ModulePage({
         .from('modules')
         .select('*')
         .eq('id', moduleId)
+        .is('deleted_at', null)
         .single()
 
     if (moduleError || !moduleData) {

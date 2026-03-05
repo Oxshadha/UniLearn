@@ -27,11 +27,22 @@ export default async function YearPage({
     const canEdit = year <= userYear
 
     // Fetch modules for this year
+    const nowIso = new Date().toISOString()
+
     const { data: modules } = await supabase
         .from('modules')
         .select('*')
         .eq('year', year)
+        .is('deleted_at', null)
         .order('code')
+
+    const { data: deletedModules } = await supabase
+        .from('modules')
+        .select('*')
+        .eq('year', year)
+        .not('deleted_at', 'is', null)
+        .gt('purge_after', nowIso)
+        .order('deleted_at', { ascending: false })
 
     return (
         <div className="space-y-6">
@@ -60,10 +71,10 @@ export default async function YearPage({
             {/* Module List with CRUD */}
             <ModuleList
                 modules={modules || []}
+                deletedModules={deletedModules || []}
                 year={year}
                 canEdit={canEdit}
                 currentSemester={currentSemester}
-                userYear={userYear}
             />
         </div>
     )

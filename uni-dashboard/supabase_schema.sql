@@ -10,6 +10,7 @@ DROP FUNCTION IF EXISTS can_edit_module(uuid) CASCADE;
 DROP FUNCTION IF EXISTS get_viewable_batches(int) CASCADE;
 DROP FUNCTION IF EXISTS get_latest_batch_version(uuid, int) CASCADE;
 DROP FUNCTION IF EXISTS can_edit_batch_content(uuid, int) CASCADE;
+DROP FUNCTION IF EXISTS purge_expired_modules() CASCADE;
 
 -- Drop tables (CASCADE handles policies automatically)
 DROP TABLE IF EXISTS past_paper_downloads CASCADE;
@@ -65,7 +66,10 @@ CREATE TABLE modules (
   code text NOT NULL UNIQUE, -- 'IN1621', 'CM2300'
   name text NOT NULL,
   year int NOT NULL DEFAULT 1, -- 1, 2, 3, 4
-  semester int NOT NULL DEFAULT 1 -- 1 or 2
+  semester int NOT NULL DEFAULT 1, -- 1 or 2
+  deleted_at timestamptz,
+  deleted_by uuid REFERENCES profiles(id),
+  purge_after timestamptz
 );
 
 -- =====================================================
@@ -263,6 +267,7 @@ DECLARE
   v_user_current_semester int;
   v_user_index text;
   v_module_semester int;
+  v_module_deleted_at timestamptz;
   v_existing_content_json jsonb;
   v_existing_lecturer_name text;
   v_saved_version_id uuid;
@@ -289,12 +294,12 @@ BEGIN
     RAISE EXCEPTION 'You can only edit content for your own batch';
   END IF;
 
-  SELECT semester
-  INTO v_module_semester
+  SELECT semester, deleted_at
+  INTO v_module_semester, v_module_deleted_at
   FROM modules
   WHERE id = p_module_id;
 
-  IF v_module_semester IS NULL THEN
+  IF v_module_semester IS NULL OR v_module_deleted_at IS NOT NULL THEN
     RAISE EXCEPTION 'Module not found';
   END IF;
 
@@ -427,6 +432,7 @@ DECLARE
   v_user_current_semester int;
   v_user_index text;
   v_module_semester int;
+  v_module_deleted_at timestamptz;
   v_source_content module_content_versions%ROWTYPE;
   v_source_paper past_paper_structures%ROWTYPE;
   v_source_ca record;
@@ -454,12 +460,12 @@ BEGIN
     RAISE EXCEPTION 'You can only clone to your own batch';
   END IF;
 
-  SELECT semester
-  INTO v_module_semester
+  SELECT semester, deleted_at
+  INTO v_module_semester, v_module_deleted_at
   FROM modules
   WHERE id = p_module_id;
 
-  IF v_module_semester IS NULL THEN
+  IF v_module_semester IS NULL OR v_module_deleted_at IS NOT NULL THEN
     RAISE EXCEPTION 'Module not found';
   END IF;
 
@@ -602,6 +608,25 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+CREATE OR REPLACE FUNCTION purge_expired_modules()
+RETURNS int AS $$
+DECLARE
+  v_deleted_count int;
+BEGIN
+  WITH deleted_rows AS (
+    DELETE FROM modules
+    WHERE deleted_at IS NOT NULL
+      AND purge_after IS NOT NULL
+      AND purge_after <= now()
+    RETURNING 1
+  )
+  SELECT COUNT(*) INTO v_deleted_count
+  FROM deleted_rows;
+
+  RETURN v_deleted_count;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 -- =====================================================
 -- ROW LEVEL SECURITY (RLS)
 -- =====================================================
@@ -725,6 +750,8 @@ CREATE POLICY "Insert own edit logs" ON edit_logs
 -- =====================================================
 CREATE INDEX idx_module_content_versions_module_batch ON module_content_versions(module_id, batch_number);
 CREATE INDEX idx_module_content_versions_updated_at ON module_content_versions(updated_at DESC);
+CREATE INDEX idx_modules_deleted_at ON modules(deleted_at);
+CREATE INDEX idx_modules_purge_after ON modules(purge_after);
 CREATE INDEX idx_past_paper_structures_module_batch ON past_paper_structures(module_id, batch_number);
 CREATE INDEX idx_continuous_assessments_module_batch ON continuous_assessments(module_id, batch_number);
 CREATE INDEX idx_past_paper_downloads_module_batch ON past_paper_downloads(module_id, batch_number);
@@ -785,6 +812,7 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 GRANT EXECUTE ON FUNCTION increment_batch_semester(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION purge_expired_modules() TO authenticated;
 
 -- Done!
 SELECT 'Schema deployed with batch versioning and semester management!' as status;

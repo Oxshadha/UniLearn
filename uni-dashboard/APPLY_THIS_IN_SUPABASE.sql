@@ -5,7 +5,18 @@
 BEGIN;
 
 -- =====================================================
--- 1. Extend edit_logs for the batch-versioned content model
+-- 1. Add module soft-delete fields
+-- =====================================================
+ALTER TABLE modules
+  ADD COLUMN IF NOT EXISTS deleted_at timestamptz,
+  ADD COLUMN IF NOT EXISTS deleted_by uuid REFERENCES profiles(id),
+  ADD COLUMN IF NOT EXISTS purge_after timestamptz;
+
+CREATE INDEX IF NOT EXISTS idx_modules_deleted_at ON modules(deleted_at);
+CREATE INDEX IF NOT EXISTS idx_modules_purge_after ON modules(purge_after);
+
+-- =====================================================
+-- 2. Extend edit_logs for the batch-versioned content model
 -- =====================================================
 ALTER TABLE edit_logs
   ADD COLUMN IF NOT EXISTS module_id uuid REFERENCES modules(id) ON DELETE CASCADE,
@@ -20,7 +31,7 @@ ALTER TABLE edit_logs
   CHECK (action_type IN ('save', 'clone'));
 
 -- =====================================================
--- 2. Update edit_logs policies
+-- 3. Update edit_logs policies
 -- =====================================================
 DROP POLICY IF EXISTS "Read own edit logs" ON edit_logs;
 DROP POLICY IF EXISTS "Read viewable edit logs" ON edit_logs;
@@ -49,13 +60,13 @@ CREATE POLICY "Insert own edit logs" ON edit_logs
   FOR INSERT WITH CHECK (edited_by = auth.uid());
 
 -- =====================================================
--- 3. Add indexes for faster history lookups
+-- 4. Add indexes for faster history lookups
 -- =====================================================
 CREATE INDEX IF NOT EXISTS idx_edit_logs_version_id ON edit_logs(module_content_version_id);
 CREATE INDEX IF NOT EXISTS idx_edit_logs_created_at ON edit_logs(created_at DESC);
 
 -- =====================================================
--- 4. Transactional save RPC
+-- 5. Transactional save RPC
 -- =====================================================
 CREATE OR REPLACE FUNCTION save_module_bundle(
   p_module_id uuid,
@@ -72,6 +83,7 @@ DECLARE
   v_user_current_semester int;
   v_user_index text;
   v_module_semester int;
+  v_module_deleted_at timestamptz;
   v_existing_content_json jsonb;
   v_existing_lecturer_name text;
   v_saved_version_id uuid;
@@ -98,12 +110,12 @@ BEGIN
     RAISE EXCEPTION 'You can only edit content for your own batch';
   END IF;
 
-  SELECT semester
-  INTO v_module_semester
+  SELECT semester, deleted_at
+  INTO v_module_semester, v_module_deleted_at
   FROM modules
   WHERE id = p_module_id;
 
-  IF v_module_semester IS NULL THEN
+  IF v_module_semester IS NULL OR v_module_deleted_at IS NOT NULL THEN
     RAISE EXCEPTION 'Module not found';
   END IF;
 
@@ -224,7 +236,7 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- =====================================================
--- 5. Transactional clone RPC
+-- 6. Transactional clone RPC
 -- =====================================================
 CREATE OR REPLACE FUNCTION clone_module_bundle(
   p_module_id uuid,
@@ -238,6 +250,7 @@ DECLARE
   v_user_current_semester int;
   v_user_index text;
   v_module_semester int;
+  v_module_deleted_at timestamptz;
   v_source_content module_content_versions%ROWTYPE;
   v_source_paper past_paper_structures%ROWTYPE;
   v_source_ca record;
@@ -265,12 +278,12 @@ BEGIN
     RAISE EXCEPTION 'You can only clone to your own batch';
   END IF;
 
-  SELECT semester
-  INTO v_module_semester
+  SELECT semester, deleted_at
+  INTO v_module_semester, v_module_deleted_at
   FROM modules
   WHERE id = p_module_id;
 
-  IF v_module_semester IS NULL THEN
+  IF v_module_semester IS NULL OR v_module_deleted_at IS NOT NULL THEN
     RAISE EXCEPTION 'Module not found';
   END IF;
 
@@ -412,6 +425,30 @@ BEGIN
   );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- =====================================================
+-- 7. Purge helper for modules past the 7-day restore window
+-- =====================================================
+CREATE OR REPLACE FUNCTION purge_expired_modules()
+RETURNS int AS $$
+DECLARE
+  v_deleted_count int;
+BEGIN
+  WITH deleted_rows AS (
+    DELETE FROM modules
+    WHERE deleted_at IS NOT NULL
+      AND purge_after IS NOT NULL
+      AND purge_after <= now()
+    RETURNING 1
+  )
+  SELECT COUNT(*) INTO v_deleted_count
+  FROM deleted_rows;
+
+  RETURN v_deleted_count;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+GRANT EXECUTE ON FUNCTION purge_expired_modules() TO authenticated;
 
 COMMIT;
 

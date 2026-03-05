@@ -65,7 +65,7 @@ export default function AddModuleDialog({ year, onModuleAdded }: Props) {
 
         if (insertError) {
             if (insertError.code === '23505') {
-                setError('A module with this code already exists')
+                setError('A module with this code already exists or is in Recently Deleted')
             } else {
                 setError(insertError.message)
             }

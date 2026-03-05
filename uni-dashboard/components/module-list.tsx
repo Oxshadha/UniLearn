@@ -7,7 +7,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { BookOpen, ChevronRight, Trash2, Pencil, X, Check, Lock } from 'lucide-react'
+import { BookOpen, ChevronRight, RotateCcw, Trash2, Pencil, X, Check, Lock } from 'lucide-react'
 import AddModuleDialog from '@/components/add-module-dialog'
 import { canEditModuleAtSemester } from '@/lib/academic'
 
@@ -17,30 +17,79 @@ interface Module {
     name: string
     year: number
     semester: number
+    deleted_at?: string | null
+    deleted_by?: string | null
+    purge_after?: string | null
 }
 
 interface Props {
     modules: Module[]
+    deletedModules: Module[]
     year: number
     canEdit: boolean
     currentSemester: number
-    userYear: number
 }
 
-export default function ModuleList({ modules: initialModules, year, canEdit, currentSemester }: Props) {
+const SEVEN_DAYS_IN_MS = 7 * 24 * 60 * 60 * 1000
+
+const isRestorable = (module: Module) => {
+    if (!module.purge_after) return false
+    return new Date(module.purge_after).getTime() > Date.now()
+}
+
+const formatTimeRemaining = (purgeAfter?: string | null) => {
+    if (!purgeAfter) return 'Restore window unavailable'
+
+    const remainingMs = new Date(purgeAfter).getTime() - Date.now()
+    if (remainingMs <= 0) return 'Restore window expired'
+
+    const days = Math.floor(remainingMs / (24 * 60 * 60 * 1000))
+    if (days >= 1) {
+        return `${days} day${days === 1 ? '' : 's'} left to restore`
+    }
+
+    const hours = Math.max(1, Math.ceil(remainingMs / (60 * 60 * 1000)))
+    return `${hours} hour${hours === 1 ? '' : 's'} left to restore`
+}
+
+export default function ModuleList({
+    modules: initialModules,
+    deletedModules: initialDeletedModules,
+    year,
+    canEdit,
+    currentSemester,
+}: Props) {
     const [modules, setModules] = useState<Module[]>(initialModules)
+    const [deletedModules, setDeletedModules] = useState<Module[]>(
+        initialDeletedModules.filter(isRestorable)
+    )
     const [editingId, setEditingId] = useState<string | null>(null)
     const [editCode, setEditCode] = useState('')
     const [editName, setEditName] = useState('')
+    const [actionError, setActionError] = useState<string | null>(null)
     const supabase = createClient()
 
     const refreshModules = async () => {
-        const { data } = await supabase
-            .from('modules')
-            .select('*')
-            .eq('year', year)
-            .order('code')
-        if (data) setModules(data)
+        const nowIso = new Date().toISOString()
+
+        const [{ data: activeData }, { data: deletedData }] = await Promise.all([
+            supabase
+                .from('modules')
+                .select('*')
+                .eq('year', year)
+                .is('deleted_at', null)
+                .order('code'),
+            supabase
+                .from('modules')
+                .select('*')
+                .eq('year', year)
+                .not('deleted_at', 'is', null)
+                .gt('purge_after', nowIso)
+                .order('deleted_at', { ascending: false }),
+        ])
+
+        if (activeData) setModules(activeData)
+        if (deletedData) setDeletedModules(deletedData.filter(isRestorable))
     }
 
     const startEdit = (module: Module) => {
@@ -57,6 +106,7 @@ export default function ModuleList({ modules: initialModules, year, canEdit, cur
 
     const saveEdit = async (moduleId: string) => {
         if (!editCode.trim() || !editName.trim()) return
+        setActionError(null)
 
         const { error } = await supabase
             .from('modules')
@@ -66,25 +116,69 @@ export default function ModuleList({ modules: initialModules, year, canEdit, cur
         if (!error) {
             await refreshModules()
             cancelEdit()
+        } else {
+            setActionError(error.message)
         }
     }
 
     const deleteModule = async (moduleId: string) => {
-        if (!confirm('Delete this module? This will also delete all content.')) return
+        if (!confirm('Remove this module from the UI? You can restore it for 7 days.')) return
+        setActionError(null)
+
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user) {
+            setActionError('You must be signed in to delete a module.')
+            return
+        }
+
+        const restoreUntilDate = new Date()
+        restoreUntilDate.setTime(restoreUntilDate.getTime() + SEVEN_DAYS_IN_MS)
 
         const { error } = await supabase
             .from('modules')
-            .delete()
+            .update({
+                deleted_at: new Date().toISOString(),
+                deleted_by: user.id,
+                purge_after: restoreUntilDate.toISOString(),
+            })
             .eq('id', moduleId)
+            .is('deleted_at', null)
 
         if (!error) {
-            setModules(modules.filter(m => m.id !== moduleId))
+            await refreshModules()
+        } else {
+            setActionError(error.message)
+        }
+    }
+
+    const restoreModule = async (moduleId: string) => {
+        setActionError(null)
+
+        const { error } = await supabase
+            .from('modules')
+            .update({
+                deleted_at: null,
+                deleted_by: null,
+                purge_after: null,
+            })
+            .eq('id', moduleId)
+            .not('deleted_at', 'is', null)
+
+        if (!error) {
+            await refreshModules()
+        } else {
+            setActionError(error.message)
         }
     }
 
     if (modules.length === 0) {
         return (
             <div className="space-y-4">
+                {actionError && (
+                    <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+                        {actionError}
+                    </p>
+                )}
                 <Card className="border-2 border-dashed">
                     <CardContent className="p-12 text-center">
                         <BookOpen className="h-12 w-12 text-gray-300 mx-auto mb-4" />
@@ -100,6 +194,12 @@ export default function ModuleList({ modules: initialModules, year, canEdit, cur
 
     return (
         <div className="space-y-4">
+            {actionError && (
+                <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+                    {actionError}
+                </p>
+            )}
+
             {/* Add Module Button */}
             {canEdit && (
                 <div className="flex justify-end">
@@ -200,6 +300,55 @@ export default function ModuleList({ modules: initialModules, year, canEdit, cur
                     </Card>
                 ))}
             </div>
+
+            {canEdit && deletedModules.length > 0 && (
+                <Card className="border border-orange-200 bg-orange-50/40">
+                    <CardContent className="p-5 space-y-4">
+                        <div className="flex items-center justify-between gap-3">
+                            <div>
+                                <h3 className="font-semibold text-[#161616]">Recently Deleted</h3>
+                                <p className="text-sm text-gray-600">
+                                    Deleted modules stay restorable for 7 days before they can be purged.
+                                </p>
+                            </div>
+                            <Badge className="bg-orange-100 text-orange-700 hover:bg-orange-100">
+                                {deletedModules.length} hidden
+                            </Badge>
+                        </div>
+
+                        <div className="space-y-3">
+                            {deletedModules.map((module) => (
+                                <div
+                                    key={module.id}
+                                    className="flex flex-col gap-3 rounded-lg border border-orange-200 bg-white p-4 md:flex-row md:items-center md:justify-between"
+                                >
+                                    <div className="space-y-1">
+                                        <div className="flex items-center gap-2">
+                                            <Badge variant="outline" className="font-mono text-[#1B61D9] border-[#1B61D9]">
+                                                {module.code}
+                                            </Badge>
+                                            <Badge variant="secondary">Sem {module.semester}</Badge>
+                                        </div>
+                                        <p className="font-medium text-[#161616]">{module.name}</p>
+                                        <p className="text-sm text-gray-500">
+                                            {formatTimeRemaining(module.purge_after)}
+                                        </p>
+                                    </div>
+
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        onClick={() => restoreModule(module.id)}
+                                    >
+                                        <RotateCcw className="mr-2 h-4 w-4" />
+                                        Restore
+                                    </Button>
+                                </div>
+                            ))}
+                        </div>
+                    </CardContent>
+                </Card>
+            )}
         </div>
     )
 }
