@@ -25,6 +25,13 @@ interface SaveContentBody {
     lecturerName?: string
 }
 
+interface ProfileBatchDetailsRow {
+    batches: {
+        batch_number: number
+        current_semester: number
+    } | null
+}
+
 /**
  * GET /api/modules/[moduleId]/content?batch=24
  * Fetch module content for a specific batch
@@ -76,15 +83,26 @@ export async function GET(
             .is('deleted_at', null)
             .order('ca_number', { ascending: true })
 
+        // Fetch past paper links
+        const { data: pastPaperDownloads } = await supabase
+            .from('past_paper_downloads')
+            .select('*')
+            .eq('module_id', moduleId)
+            .eq('batch_number', batchNumber)
+            .is('deleted_at', null)
+            .order('uploaded_at', { ascending: false })
+
         // Return combined data
         return NextResponse.json({
             batchNumber,
             content: contentVersion || null,
             pastPaperStructure: paperStructure || null,
             continuousAssessments: continuousAssessments || [],
+            pastPaperDownloads: pastPaperDownloads || [],
             hasContent: !!contentVersion,
             hasPaperStructure: !!paperStructure,
-            hasCAs: (continuousAssessments?.length || 0) > 0
+            hasCAs: (continuousAssessments?.length || 0) > 0,
+            hasPastPaperDownloads: (pastPaperDownloads?.length || 0) > 0
         })
 
     } catch (error) {
@@ -183,5 +201,70 @@ export async function POST(
             { error: 'Internal server error' },
             { status: 500 }
         )
+    }
+}
+
+/**
+ * DELETE /api/modules/[moduleId]/content?batch=23&downloadId=<uuid>
+ * Soft-delete a past paper link for a batch (7-day restore window)
+ */
+export async function DELETE(
+    request: NextRequest,
+    { params }: { params: { moduleId: string } }
+) {
+    try {
+        const supabase = await createClient()
+        const { moduleId } = params
+        const batchNumber = Number.parseInt(request.nextUrl.searchParams.get('batch') || '', 10)
+        const downloadId = request.nextUrl.searchParams.get('downloadId')
+
+        if (!batchNumber || !downloadId) {
+            return NextResponse.json({ error: 'Batch number and downloadId are required' }, { status: 400 })
+        }
+
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+        }
+
+        const { data: profileRow, error: profileError } = await supabase
+            .from('profiles')
+            .select('batches(batch_number, current_semester)')
+            .eq('id', user.id)
+            .single()
+
+        const profile = profileRow as ProfileBatchDetailsRow | null
+
+        if (profileError || !profile?.batches?.batch_number) {
+            return NextResponse.json({ error: 'Profile is missing a valid batch assignment' }, { status: 403 })
+        }
+
+        const userBatchNumber = profile.batches.batch_number
+        if (!(userBatchNumber === batchNumber || userBatchNumber === batchNumber + 1)) {
+            return NextResponse.json({ error: 'You do not have permission to modify these past papers' }, { status: 403 })
+        }
+
+        const restoreUntil = new Date(Date.now() + (7 * 24 * 60 * 60 * 1000)).toISOString()
+
+        const { error: updateError } = await supabase
+            .from('past_paper_downloads')
+            .update({
+                deleted_at: new Date().toISOString(),
+                deleted_by: user.id,
+                purge_after: restoreUntil,
+            })
+            .eq('id', downloadId)
+            .eq('module_id', moduleId)
+            .eq('batch_number', batchNumber)
+            .is('deleted_at', null)
+
+        if (updateError) {
+            return NextResponse.json({ error: updateError.message }, { status: 500 })
+        }
+
+        return NextResponse.json({ success: true })
+    } catch (error) {
+        console.error('Error deleting past paper link:', error)
+        return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
     }
 }
