@@ -16,7 +16,46 @@ CREATE INDEX IF NOT EXISTS idx_modules_deleted_at ON modules(deleted_at);
 CREATE INDEX IF NOT EXISTS idx_modules_purge_after ON modules(purge_after);
 
 -- =====================================================
--- 2. Extend edit_logs for the batch-versioned content model
+-- 2. Add soft-delete fields for batch-owned content tables
+-- =====================================================
+ALTER TABLE module_content_versions
+  ADD COLUMN IF NOT EXISTS deleted_at timestamptz,
+  ADD COLUMN IF NOT EXISTS deleted_by uuid REFERENCES profiles(id),
+  ADD COLUMN IF NOT EXISTS purge_after timestamptz;
+
+ALTER TABLE past_paper_structures
+  ADD COLUMN IF NOT EXISTS deleted_at timestamptz,
+  ADD COLUMN IF NOT EXISTS deleted_by uuid REFERENCES profiles(id),
+  ADD COLUMN IF NOT EXISTS purge_after timestamptz;
+
+ALTER TABLE continuous_assessments
+  ADD COLUMN IF NOT EXISTS deleted_at timestamptz,
+  ADD COLUMN IF NOT EXISTS deleted_by uuid REFERENCES profiles(id),
+  ADD COLUMN IF NOT EXISTS purge_after timestamptz;
+
+ALTER TABLE past_paper_downloads
+  ADD COLUMN IF NOT EXISTS deleted_at timestamptz,
+  ADD COLUMN IF NOT EXISTS deleted_by uuid REFERENCES profiles(id),
+  ADD COLUMN IF NOT EXISTS purge_after timestamptz;
+
+CREATE INDEX IF NOT EXISTS idx_module_content_versions_deleted_at ON module_content_versions(deleted_at);
+CREATE INDEX IF NOT EXISTS idx_module_content_versions_purge_after ON module_content_versions(purge_after);
+CREATE INDEX IF NOT EXISTS idx_past_paper_structures_deleted_at ON past_paper_structures(deleted_at);
+CREATE INDEX IF NOT EXISTS idx_past_paper_structures_purge_after ON past_paper_structures(purge_after);
+CREATE INDEX IF NOT EXISTS idx_continuous_assessments_deleted_at ON continuous_assessments(deleted_at);
+CREATE INDEX IF NOT EXISTS idx_continuous_assessments_purge_after ON continuous_assessments(purge_after);
+CREATE INDEX IF NOT EXISTS idx_past_paper_downloads_deleted_at ON past_paper_downloads(deleted_at);
+CREATE INDEX IF NOT EXISTS idx_past_paper_downloads_purge_after ON past_paper_downloads(purge_after);
+
+ALTER TABLE continuous_assessments
+  DROP CONSTRAINT IF EXISTS continuous_assessments_module_id_batch_number_ca_number_key;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_continuous_assessments_active_unique
+  ON continuous_assessments(module_id, batch_number, ca_number)
+  WHERE deleted_at IS NULL;
+
+-- =====================================================
+-- 3. Extend edit_logs for the batch-versioned content model
 -- =====================================================
 ALTER TABLE edit_logs
   ADD COLUMN IF NOT EXISTS module_id uuid REFERENCES modules(id) ON DELETE CASCADE,
@@ -31,11 +70,15 @@ ALTER TABLE edit_logs
   CHECK (action_type IN ('save', 'clone'));
 
 -- =====================================================
--- 3. Update edit_logs policies
+-- 4. Update edit_logs policies
 -- =====================================================
 DROP POLICY IF EXISTS "Read own edit logs" ON edit_logs;
 DROP POLICY IF EXISTS "Read viewable edit logs" ON edit_logs;
 DROP POLICY IF EXISTS "Insert own edit logs" ON edit_logs;
+DROP POLICY IF EXISTS "Read viewable batch content" ON module_content_versions;
+DROP POLICY IF EXISTS "Read viewable batch papers" ON past_paper_structures;
+DROP POLICY IF EXISTS "Read viewable batch CAs" ON continuous_assessments;
+DROP POLICY IF EXISTS "Read viewable batch downloads" ON past_paper_downloads;
 
 CREATE POLICY "Read viewable edit logs" ON edit_logs
   FOR SELECT USING (
@@ -59,14 +102,74 @@ CREATE POLICY "Read viewable edit logs" ON edit_logs
 CREATE POLICY "Insert own edit logs" ON edit_logs
   FOR INSERT WITH CHECK (edited_by = auth.uid());
 
+CREATE POLICY "Read viewable batch content" ON module_content_versions
+  FOR SELECT USING (
+    deleted_at IS NULL
+    AND batch_number = ANY(
+      get_viewable_batches(
+        (
+          SELECT b.batch_number
+          FROM profiles p
+          JOIN batches b ON b.id = p.batch_id
+          WHERE p.id = auth.uid()
+        )
+      )
+    )
+  );
+
+CREATE POLICY "Read viewable batch papers" ON past_paper_structures
+  FOR SELECT USING (
+    deleted_at IS NULL
+    AND batch_number = ANY(
+      get_viewable_batches(
+        (
+          SELECT b.batch_number
+          FROM profiles p
+          JOIN batches b ON b.id = p.batch_id
+          WHERE p.id = auth.uid()
+        )
+      )
+    )
+  );
+
+CREATE POLICY "Read viewable batch CAs" ON continuous_assessments
+  FOR SELECT USING (
+    deleted_at IS NULL
+    AND batch_number = ANY(
+      get_viewable_batches(
+        (
+          SELECT b.batch_number
+          FROM profiles p
+          JOIN batches b ON b.id = p.batch_id
+          WHERE p.id = auth.uid()
+        )
+      )
+    )
+  );
+
+CREATE POLICY "Read viewable batch downloads" ON past_paper_downloads
+  FOR SELECT USING (
+    deleted_at IS NULL
+    AND batch_number = ANY(
+      get_viewable_batches(
+        (
+          SELECT b.batch_number
+          FROM profiles p
+          JOIN batches b ON b.id = p.batch_id
+          WHERE p.id = auth.uid()
+        )
+      )
+    )
+  );
+
 -- =====================================================
--- 4. Add indexes for faster history lookups
+-- 5. Add indexes for faster history lookups
 -- =====================================================
 CREATE INDEX IF NOT EXISTS idx_edit_logs_version_id ON edit_logs(module_content_version_id);
 CREATE INDEX IF NOT EXISTS idx_edit_logs_created_at ON edit_logs(created_at DESC);
 
 -- =====================================================
--- 5. Transactional save RPC
+-- 6. Transactional save RPC
 -- =====================================================
 CREATE OR REPLACE FUNCTION save_module_bundle(
   p_module_id uuid,
@@ -127,7 +230,9 @@ BEGIN
   INTO v_existing_content_json, v_existing_lecturer_name
   FROM module_content_versions
   WHERE module_id = p_module_id
-    AND batch_number = p_batch_number;
+    AND batch_number = p_batch_number
+  ORDER BY deleted_at NULLS FIRST
+  LIMIT 1;
 
   INSERT INTO module_content_versions (
     module_id,
@@ -153,7 +258,10 @@ BEGIN
   DO UPDATE SET
     content_json = EXCLUDED.content_json,
     lecturer_name = EXCLUDED.lecturer_name,
-    updated_by = EXCLUDED.updated_by
+    updated_by = EXCLUDED.updated_by,
+    deleted_at = NULL,
+    deleted_by = NULL,
+    purge_after = NULL
   RETURNING id, content_json
   INTO v_saved_version_id, v_saved_content_json;
 
@@ -175,13 +283,21 @@ BEGIN
     ON CONFLICT (module_id, batch_number)
     DO UPDATE SET
       structure_json = EXCLUDED.structure_json,
-      updated_by = EXCLUDED.updated_by;
+      updated_by = EXCLUDED.updated_by,
+      deleted_at = NULL,
+      deleted_by = NULL,
+      purge_after = NULL;
   END IF;
 
   IF p_continuous_assessments IS NOT NULL THEN
-    DELETE FROM continuous_assessments
+    UPDATE continuous_assessments
+    SET
+      deleted_at = now(),
+      deleted_by = v_user_id,
+      purge_after = now() + interval '7 days'
     WHERE module_id = p_module_id
-      AND batch_number = p_batch_number;
+      AND batch_number = p_batch_number
+      AND deleted_at IS NULL;
 
     IF jsonb_typeof(p_continuous_assessments) = 'array' THEN
       FOR v_ca IN
@@ -236,7 +352,7 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- =====================================================
--- 6. Transactional clone RPC
+-- 7. Transactional clone RPC
 -- =====================================================
 CREATE OR REPLACE FUNCTION clone_module_bundle(
   p_module_id uuid,
@@ -295,19 +411,22 @@ BEGIN
   INTO v_source_content
   FROM module_content_versions
   WHERE module_id = p_module_id
-    AND batch_number = p_from_batch;
+    AND batch_number = p_from_batch
+    AND deleted_at IS NULL;
 
   SELECT *
   INTO v_source_paper
   FROM past_paper_structures
   WHERE module_id = p_module_id
-    AND batch_number = p_from_batch;
+    AND batch_number = p_from_batch
+    AND deleted_at IS NULL;
 
   SELECT EXISTS (
     SELECT 1
     FROM continuous_assessments
     WHERE module_id = p_module_id
       AND batch_number = p_from_batch
+      AND deleted_at IS NULL
   )
   INTO v_has_source_cas;
 
@@ -343,7 +462,10 @@ BEGIN
     content_json = EXCLUDED.content_json,
     lecturer_name = EXCLUDED.lecturer_name,
     cloned_from_batch = EXCLUDED.cloned_from_batch,
-    updated_by = EXCLUDED.updated_by
+    updated_by = EXCLUDED.updated_by,
+    deleted_at = NULL,
+    deleted_by = NULL,
+    purge_after = NULL
   RETURNING id, content_json
   INTO v_cloned_version_id, v_cloned_content_json;
 
@@ -365,18 +487,27 @@ BEGIN
     ON CONFLICT (module_id, batch_number)
     DO UPDATE SET
       structure_json = EXCLUDED.structure_json,
-      updated_by = EXCLUDED.updated_by;
+      updated_by = EXCLUDED.updated_by,
+      deleted_at = NULL,
+      deleted_by = NULL,
+      purge_after = NULL;
   END IF;
 
-  DELETE FROM continuous_assessments
+  UPDATE continuous_assessments
+  SET
+    deleted_at = now(),
+    deleted_by = v_user_id,
+    purge_after = now() + interval '7 days'
   WHERE module_id = p_module_id
-    AND batch_number = p_to_batch;
+    AND batch_number = p_to_batch
+    AND deleted_at IS NULL;
 
   FOR v_source_ca IN
     SELECT *
     FROM continuous_assessments
     WHERE module_id = p_module_id
       AND batch_number = p_from_batch
+      AND deleted_at IS NULL
   LOOP
     INSERT INTO continuous_assessments (
       module_id,
@@ -427,22 +558,55 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- =====================================================
--- 7. Purge helper for modules past the 7-day restore window
+-- 8. Purge helper for records past the 7-day restore window
 -- =====================================================
 CREATE OR REPLACE FUNCTION purge_expired_modules()
 RETURNS int AS $$
 DECLARE
   v_deleted_count int;
 BEGIN
-  WITH deleted_rows AS (
+  WITH deleted_modules AS (
     DELETE FROM modules
     WHERE deleted_at IS NOT NULL
       AND purge_after IS NOT NULL
       AND purge_after <= now()
     RETURNING 1
+  ),
+  deleted_content AS (
+    DELETE FROM module_content_versions
+    WHERE deleted_at IS NOT NULL
+      AND purge_after IS NOT NULL
+      AND purge_after <= now()
+    RETURNING 1
+  ),
+  deleted_papers AS (
+    DELETE FROM past_paper_structures
+    WHERE deleted_at IS NOT NULL
+      AND purge_after IS NOT NULL
+      AND purge_after <= now()
+    RETURNING 1
+  ),
+  deleted_cas AS (
+    DELETE FROM continuous_assessments
+    WHERE deleted_at IS NOT NULL
+      AND purge_after IS NOT NULL
+      AND purge_after <= now()
+    RETURNING 1
+  ),
+  deleted_downloads AS (
+    DELETE FROM past_paper_downloads
+    WHERE deleted_at IS NOT NULL
+      AND purge_after IS NOT NULL
+      AND purge_after <= now()
+    RETURNING 1
   )
-  SELECT COUNT(*) INTO v_deleted_count
-  FROM deleted_rows;
+  SELECT
+    (SELECT COUNT(*) FROM deleted_modules) +
+    (SELECT COUNT(*) FROM deleted_content) +
+    (SELECT COUNT(*) FROM deleted_papers) +
+    (SELECT COUNT(*) FROM deleted_cas) +
+    (SELECT COUNT(*) FROM deleted_downloads)
+  INTO v_deleted_count;
 
   RETURN v_deleted_count;
 END;
@@ -452,8 +616,3 @@ GRANT EXECUTE ON FUNCTION purge_expired_modules() TO authenticated;
 
 COMMIT;
 
--- After this succeeds:
--- 1. Refresh your app.
--- 2. Test saving a module.
--- 3. Test cloning from a senior batch.
--- 4. Open the history pages and confirm logs appear.

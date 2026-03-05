@@ -96,6 +96,9 @@ CREATE TABLE module_content_versions (
   updated_at timestamptz DEFAULT now(),
   created_by uuid REFERENCES profiles(id),
   updated_by uuid REFERENCES profiles(id),
+  deleted_at timestamptz,
+  deleted_by uuid REFERENCES profiles(id),
+  purge_after timestamptz,
   
   -- Ensure one version per module per batch
   UNIQUE(module_id, batch_number)
@@ -139,6 +142,9 @@ CREATE TABLE past_paper_structures (
   updated_at timestamptz DEFAULT now(),
   created_by uuid REFERENCES profiles(id),
   updated_by uuid REFERENCES profiles(id),
+  deleted_at timestamptz,
+  deleted_by uuid REFERENCES profiles(id),
+  purge_after timestamptz,
   
   UNIQUE(module_id, batch_number)
 );
@@ -162,8 +168,9 @@ CREATE TABLE continuous_assessments (
   
   created_at timestamptz DEFAULT now(),
   updated_at timestamptz DEFAULT now(),
-  
-  UNIQUE(module_id, batch_number, ca_number)
+  deleted_at timestamptz,
+  deleted_by uuid REFERENCES profiles(id),
+  purge_after timestamptz
 );
 
 CREATE TRIGGER update_continuous_assessments_updated_at
@@ -182,7 +189,10 @@ CREATE TABLE past_paper_downloads (
   download_url text NOT NULL,
   file_name text NOT NULL,
   uploaded_at timestamptz DEFAULT now(),
-  uploaded_by uuid REFERENCES profiles(id)
+  uploaded_by uuid REFERENCES profiles(id),
+  deleted_at timestamptz,
+  deleted_by uuid REFERENCES profiles(id),
+  purge_after timestamptz
 );
 
 -- =====================================================
@@ -311,7 +321,9 @@ BEGIN
   INTO v_existing_content_json, v_existing_lecturer_name
   FROM module_content_versions
   WHERE module_id = p_module_id
-    AND batch_number = p_batch_number;
+    AND batch_number = p_batch_number
+  ORDER BY deleted_at NULLS FIRST
+  LIMIT 1;
 
   INSERT INTO module_content_versions (
     module_id,
@@ -337,7 +349,10 @@ BEGIN
   DO UPDATE SET
     content_json = EXCLUDED.content_json,
     lecturer_name = EXCLUDED.lecturer_name,
-    updated_by = EXCLUDED.updated_by
+    updated_by = EXCLUDED.updated_by,
+    deleted_at = NULL,
+    deleted_by = NULL,
+    purge_after = NULL
   RETURNING id, content_json
   INTO v_saved_version_id, v_saved_content_json;
 
@@ -359,13 +374,21 @@ BEGIN
     ON CONFLICT (module_id, batch_number)
     DO UPDATE SET
       structure_json = EXCLUDED.structure_json,
-      updated_by = EXCLUDED.updated_by;
+      updated_by = EXCLUDED.updated_by,
+      deleted_at = NULL,
+      deleted_by = NULL,
+      purge_after = NULL;
   END IF;
 
   IF p_continuous_assessments IS NOT NULL THEN
-    DELETE FROM continuous_assessments
+    UPDATE continuous_assessments
+    SET
+      deleted_at = now(),
+      deleted_by = v_user_id,
+      purge_after = now() + interval '7 days'
     WHERE module_id = p_module_id
-      AND batch_number = p_batch_number;
+      AND batch_number = p_batch_number
+      AND deleted_at IS NULL;
 
     IF jsonb_typeof(p_continuous_assessments) = 'array' THEN
       FOR v_ca IN
@@ -477,19 +500,22 @@ BEGIN
   INTO v_source_content
   FROM module_content_versions
   WHERE module_id = p_module_id
-    AND batch_number = p_from_batch;
+    AND batch_number = p_from_batch
+    AND deleted_at IS NULL;
 
   SELECT *
   INTO v_source_paper
   FROM past_paper_structures
   WHERE module_id = p_module_id
-    AND batch_number = p_from_batch;
+    AND batch_number = p_from_batch
+    AND deleted_at IS NULL;
 
   SELECT EXISTS (
     SELECT 1
     FROM continuous_assessments
     WHERE module_id = p_module_id
       AND batch_number = p_from_batch
+      AND deleted_at IS NULL
   )
   INTO v_has_source_cas;
 
@@ -525,7 +551,10 @@ BEGIN
     content_json = EXCLUDED.content_json,
     lecturer_name = EXCLUDED.lecturer_name,
     cloned_from_batch = EXCLUDED.cloned_from_batch,
-    updated_by = EXCLUDED.updated_by
+    updated_by = EXCLUDED.updated_by,
+    deleted_at = NULL,
+    deleted_by = NULL,
+    purge_after = NULL
   RETURNING id, content_json
   INTO v_cloned_version_id, v_cloned_content_json;
 
@@ -547,18 +576,27 @@ BEGIN
     ON CONFLICT (module_id, batch_number)
     DO UPDATE SET
       structure_json = EXCLUDED.structure_json,
-      updated_by = EXCLUDED.updated_by;
+      updated_by = EXCLUDED.updated_by,
+      deleted_at = NULL,
+      deleted_by = NULL,
+      purge_after = NULL;
   END IF;
 
-  DELETE FROM continuous_assessments
+  UPDATE continuous_assessments
+  SET
+    deleted_at = now(),
+    deleted_by = v_user_id,
+    purge_after = now() + interval '7 days'
   WHERE module_id = p_module_id
-    AND batch_number = p_to_batch;
+    AND batch_number = p_to_batch
+    AND deleted_at IS NULL;
 
   FOR v_source_ca IN
     SELECT *
     FROM continuous_assessments
     WHERE module_id = p_module_id
       AND batch_number = p_from_batch
+      AND deleted_at IS NULL
   LOOP
     INSERT INTO continuous_assessments (
       module_id,
@@ -613,15 +651,48 @@ RETURNS int AS $$
 DECLARE
   v_deleted_count int;
 BEGIN
-  WITH deleted_rows AS (
+  WITH deleted_modules AS (
     DELETE FROM modules
     WHERE deleted_at IS NOT NULL
       AND purge_after IS NOT NULL
       AND purge_after <= now()
     RETURNING 1
+  ),
+  deleted_content AS (
+    DELETE FROM module_content_versions
+    WHERE deleted_at IS NOT NULL
+      AND purge_after IS NOT NULL
+      AND purge_after <= now()
+    RETURNING 1
+  ),
+  deleted_papers AS (
+    DELETE FROM past_paper_structures
+    WHERE deleted_at IS NOT NULL
+      AND purge_after IS NOT NULL
+      AND purge_after <= now()
+    RETURNING 1
+  ),
+  deleted_cas AS (
+    DELETE FROM continuous_assessments
+    WHERE deleted_at IS NOT NULL
+      AND purge_after IS NOT NULL
+      AND purge_after <= now()
+    RETURNING 1
+  ),
+  deleted_downloads AS (
+    DELETE FROM past_paper_downloads
+    WHERE deleted_at IS NOT NULL
+      AND purge_after IS NOT NULL
+      AND purge_after <= now()
+    RETURNING 1
   )
-  SELECT COUNT(*) INTO v_deleted_count
-  FROM deleted_rows;
+  SELECT
+    (SELECT COUNT(*) FROM deleted_modules) +
+    (SELECT COUNT(*) FROM deleted_content) +
+    (SELECT COUNT(*) FROM deleted_papers) +
+    (SELECT COUNT(*) FROM deleted_cas) +
+    (SELECT COUNT(*) FROM deleted_downloads)
+  INTO v_deleted_count;
 
   RETURN v_deleted_count;
 END;
@@ -670,6 +741,8 @@ CREATE POLICY "Admin manage modules" ON modules
 -- Module Content Versions: Read if batch is viewable, Edit if own batch
 CREATE POLICY "Read viewable batch content" ON module_content_versions
   FOR SELECT USING (
+    deleted_at IS NULL
+    AND
     batch_number = ANY(
       get_viewable_batches(
         (SELECT b.batch_number FROM profiles p JOIN batches b ON b.id = p.batch_id WHERE p.id = auth.uid())
@@ -685,6 +758,8 @@ CREATE POLICY "Edit own batch content" ON module_content_versions
 -- Past Paper Structures: Same as content versions
 CREATE POLICY "Read viewable batch papers" ON past_paper_structures
   FOR SELECT USING (
+    deleted_at IS NULL
+    AND
     batch_number = ANY(
       get_viewable_batches(
         (SELECT b.batch_number FROM profiles p JOIN batches b ON b.id = p.batch_id WHERE p.id = auth.uid())
@@ -700,6 +775,8 @@ CREATE POLICY "Edit own batch papers" ON past_paper_structures
 -- Continuous Assessments: Same as content versions
 CREATE POLICY "Read viewable batch CAs" ON continuous_assessments
   FOR SELECT USING (
+    deleted_at IS NULL
+    AND
     batch_number = ANY(
       get_viewable_batches(
         (SELECT b.batch_number FROM profiles p JOIN batches b ON b.id = p.batch_id WHERE p.id = auth.uid())
@@ -715,6 +792,8 @@ CREATE POLICY "Edit own batch CAs" ON continuous_assessments
 -- Past Paper Downloads: Read viewable batches, Upload for own batch
 CREATE POLICY "Read viewable batch downloads" ON past_paper_downloads
   FOR SELECT USING (
+    deleted_at IS NULL
+    AND
     batch_number = ANY(
       get_viewable_batches(
         (SELECT b.batch_number FROM profiles p JOIN batches b ON b.id = p.batch_id WHERE p.id = auth.uid())
@@ -752,9 +831,20 @@ CREATE INDEX idx_module_content_versions_module_batch ON module_content_versions
 CREATE INDEX idx_module_content_versions_updated_at ON module_content_versions(updated_at DESC);
 CREATE INDEX idx_modules_deleted_at ON modules(deleted_at);
 CREATE INDEX idx_modules_purge_after ON modules(purge_after);
+CREATE INDEX idx_module_content_versions_deleted_at ON module_content_versions(deleted_at);
+CREATE INDEX idx_module_content_versions_purge_after ON module_content_versions(purge_after);
 CREATE INDEX idx_past_paper_structures_module_batch ON past_paper_structures(module_id, batch_number);
+CREATE INDEX idx_past_paper_structures_deleted_at ON past_paper_structures(deleted_at);
+CREATE INDEX idx_past_paper_structures_purge_after ON past_paper_structures(purge_after);
 CREATE INDEX idx_continuous_assessments_module_batch ON continuous_assessments(module_id, batch_number);
+CREATE INDEX idx_continuous_assessments_deleted_at ON continuous_assessments(deleted_at);
+CREATE INDEX idx_continuous_assessments_purge_after ON continuous_assessments(purge_after);
 CREATE INDEX idx_past_paper_downloads_module_batch ON past_paper_downloads(module_id, batch_number);
+CREATE INDEX idx_past_paper_downloads_deleted_at ON past_paper_downloads(deleted_at);
+CREATE INDEX idx_past_paper_downloads_purge_after ON past_paper_downloads(purge_after);
+CREATE UNIQUE INDEX idx_continuous_assessments_active_unique
+  ON continuous_assessments(module_id, batch_number, ca_number)
+  WHERE deleted_at IS NULL;
 CREATE INDEX idx_profiles_batch_id ON profiles(batch_id);
 CREATE INDEX idx_edit_logs_version_id ON edit_logs(module_content_version_id);
 CREATE INDEX idx_edit_logs_created_at ON edit_logs(created_at DESC);

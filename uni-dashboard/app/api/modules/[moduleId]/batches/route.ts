@@ -74,6 +74,7 @@ export async function GET(
             .select('batch_number, updated_at, lecturer_name, created_by')
             .eq('module_id', moduleId)
             .in('batch_number', viewableBatches)
+            .is('deleted_at', null)
             .order('batch_number', { ascending: false })
 
         if (error) {
@@ -87,6 +88,7 @@ export async function GET(
             .select('batch_number, updated_at')
             .eq('module_id', moduleId)
             .in('batch_number', viewableBatches)
+            .is('deleted_at', null)
 
         // Get CA structures
         const { data: caVersions } = await supabase
@@ -94,6 +96,7 @@ export async function GET(
             .select('batch_number, updated_at')
             .eq('module_id', moduleId)
             .in('batch_number', viewableBatches)
+            .is('deleted_at', null)
 
         // Combine all batch info
         const batchesMap = new Map()

@@ -55,6 +55,7 @@ export async function GET(
             .select('*')
             .eq('module_id', moduleId)
             .eq('batch_number', batchNumber)
+            .is('deleted_at', null)
             .single()
 
         // Fetch past paper structure
@@ -63,6 +64,7 @@ export async function GET(
             .select('*')
             .eq('module_id', moduleId)
             .eq('batch_number', batchNumber)
+            .is('deleted_at', null)
             .single()
 
         // Fetch continuous assessments
@@ -71,6 +73,7 @@ export async function GET(
             .select('*')
             .eq('module_id', moduleId)
             .eq('batch_number', batchNumber)
+            .is('deleted_at', null)
             .order('ca_number', { ascending: true })
 
         // Return combined data
