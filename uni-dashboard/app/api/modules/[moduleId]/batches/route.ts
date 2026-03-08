@@ -3,6 +3,13 @@ import { NextRequest, NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
 
+interface ProfileBatchRow {
+    batch_id: string | null
+    batches: {
+        batch_number: number
+    } | null
+}
+
 /**
  * GET /api/modules/[moduleId]/batches
  * Get available batch versions for a module
@@ -29,38 +36,43 @@ export async function GET(
             .eq('id', user.id)
             .single()
 
-        console.log('Profile data:', JSON.stringify(profile, null, 2))
-        console.log('Profile error:', profileError)
-
         if (profileError) {
             return NextResponse.json({ error: `Profile error: ${profileError.message}` }, { status: 500 })
         }
 
-        if (!profile) {
+        const typedProfile = profile as ProfileBatchRow | null
+
+        if (!typedProfile) {
             return NextResponse.json({ error: 'Profile not found' }, { status: 404 })
         }
 
-        if (!profile.batch_id) {
+        if (!typedProfile.batch_id) {
             return NextResponse.json({ error: 'User has no batch assigned. Please contact admin.' }, { status: 404 })
         }
 
-        const batchData = profile.batches as any
+        const batchData = typedProfile.batches
         if (!batchData || !batchData.batch_number) {
             return NextResponse.json({
                 error: 'Batch data not found. User has batch_id but join failed.',
-                debug: { batch_id: profile.batch_id, batches: profile.batches }
+                debug: { batch_id: typedProfile.batch_id, batches: typedProfile.batches }
             }, { status: 500 })
         }
 
         const userBatchNumber = batchData.batch_number
 
-        // Get viewable batches (current + 3 senior)
-        const viewableBatches = [
-            userBatchNumber,
-            userBatchNumber - 1,
-            userBatchNumber - 2,
-            userBatchNumber - 3
-        ].filter(b => b > 0) // Filter out negative batch numbers
+        // Global view access: all batch versions are visible
+        const { data: batchRows, error: batchRowsError } = await supabase
+            .from('batches')
+            .select('batch_number')
+            .order('batch_number', { ascending: false })
+
+        if (batchRowsError) {
+            return NextResponse.json({ error: batchRowsError.message }, { status: 500 })
+        }
+
+        const viewableBatches = (batchRows || [])
+            .map(row => row.batch_number)
+            .filter((batchNumber): batchNumber is number => Number.isInteger(batchNumber))
 
         // Get all available batch versions for this module
         const { data: contentVersions, error } = await supabase
@@ -68,6 +80,7 @@ export async function GET(
             .select('batch_number, updated_at, lecturer_name, created_by')
             .eq('module_id', moduleId)
             .in('batch_number', viewableBatches)
+            .is('deleted_at', null)
             .order('batch_number', { ascending: false })
 
         if (error) {
@@ -81,6 +94,7 @@ export async function GET(
             .select('batch_number, updated_at')
             .eq('module_id', moduleId)
             .in('batch_number', viewableBatches)
+            .is('deleted_at', null)
 
         // Get CA structures
         const { data: caVersions } = await supabase
@@ -88,6 +102,7 @@ export async function GET(
             .select('batch_number, updated_at')
             .eq('module_id', moduleId)
             .in('batch_number', viewableBatches)
+            .is('deleted_at', null)
 
         // Combine all batch info
         const batchesMap = new Map()
@@ -130,7 +145,7 @@ export async function GET(
             batchesMap.set(ca.batch_number, batch)
         })
 
-        // Ensure all viewable batches are in the map (even if empty)
+        // Ensure all visible batches are in the map (even if empty)
         viewableBatches.forEach(bn => {
             if (!batchesMap.has(bn)) {
                 batchesMap.set(bn, {

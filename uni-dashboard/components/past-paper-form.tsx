@@ -46,7 +46,10 @@ interface Props {
 }
 
 export default function PastPaperForm({ value, onChange, canEdit }: Props) {
-    const update = (field: keyof PastPaperStructure, newValue: any) => {
+    const update = (
+        field: keyof PastPaperStructure,
+        newValue: PastPaperStructure[keyof PastPaperStructure]
+    ) => {
         onChange({ ...value, [field]: newValue })
     }
 
@@ -270,7 +273,6 @@ export default function PastPaperForm({ value, onChange, canEdit }: Props) {
                         <div className="space-y-3 pt-2 border-t border-green-200">
                             <Label className="text-xs text-green-700">Topics and Marks for each question:</Label>
                             {Array.from({ length: value.essayCount }, (_, i) => {
-                                const individualTotal = (value.essayQuestions || []).reduce((sum, q) => sum + (q.marks || 0), 0)
                                 const currentMarks = value.essayQuestions?.[i]?.marks || 0
 
                                 return (

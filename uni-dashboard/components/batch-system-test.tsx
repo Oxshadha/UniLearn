@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { ReactNode, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -10,13 +10,26 @@ import { Loader2, CheckCircle, XCircle, Database, Globe, Code } from 'lucide-rea
  * Test page to verify batch-versioned system
  * Tests: Database schema, API endpoints, batch logic
  */
+interface EndpointResult {
+    passed: boolean
+    data: unknown
+    error: string | null
+}
+
+interface TestResults {
+    batchesAPI?: EndpointResult
+    contentAPI?: EndpointResult
+    saveAPI?: EndpointResult
+    error?: string
+}
+
 export default function BatchSystemTest({ moduleId }: { moduleId: string }) {
-    const [testResults, setTestResults] = useState<any>({})
+    const [testResults, setTestResults] = useState<TestResults>({})
     const [isRunning, setIsRunning] = useState(false)
 
     const runTests = async () => {
         setIsRunning(true)
-        const results: any = {}
+        const results: TestResults = {}
 
         try {
             // Test 1: Fetch batches endpoint
@@ -29,8 +42,9 @@ export default function BatchSystemTest({ moduleId }: { moduleId: string }) {
             }
 
             // Test 2: Fetch content for a batch
-            if (results.batchesAPI.passed && results.batchesAPI.data?.userBatchNumber) {
-                const batch = results.batchesAPI.data.userBatchNumber
+            const batchesData = results.batchesAPI?.data as { userBatchNumber?: number } | null
+            if (results.batchesAPI?.passed && batchesData?.userBatchNumber) {
+                const batch = batchesData.userBatchNumber
                 console.log(`Testing content endpoint for batch ${batch}...`)
                 const contentRes = await fetch(`/api/modules/${moduleId}/content?batch=${batch}`)
                 results.contentAPI = {
@@ -42,7 +56,7 @@ export default function BatchSystemTest({ moduleId }: { moduleId: string }) {
 
             // Test 3: Save content (if current batch)
             if (results.batchesAPI.passed) {
-                const userBatch = results.batchesAPI.data?.userBatchNumber
+                const userBatch = batchesData?.userBatchNumber
                 console.log(`Testing save endpoint for batch ${userBatch}...`)
                 const saveRes = await fetch(`/api/modules/${moduleId}/content`, {
                     method: 'POST',
@@ -145,7 +159,19 @@ export default function BatchSystemTest({ moduleId }: { moduleId: string }) {
     )
 }
 
-function TestResult({ title, icon, passed, data, error }: any) {
+function TestResult({
+    title,
+    icon,
+    passed,
+    data,
+    error
+}: {
+    title: string
+    icon: ReactNode
+    passed: boolean
+    data: unknown
+    error: string | null
+}) {
     return (
         <div className={`p-4 rounded-lg border ${passed ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
             <div className="flex items-center justify-between mb-2">

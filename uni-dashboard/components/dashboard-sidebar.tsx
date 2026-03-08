@@ -1,53 +1,79 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Home, BookOpen, History, GraduationCap, User, LogOut, Menu, X } from 'lucide-react'
+import { Home, BookOpen, Bell, History, GraduationCap, User, LogOut, Menu, Shield, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 interface DashboardSidebarProps {
-    profile: any
-    batchInfo: any
+    profile: {
+        index_number?: string
+        role?: string
+    } | null
+    batchInfo: {
+        batch_code?: string
+        current_semester?: number
+    } | null
+    currentSemester?: number
     userYear: number
     signOutAction: () => Promise<void>
 }
 
-export default function DashboardSidebar({ profile, batchInfo, userYear, signOutAction }: DashboardSidebarProps) {
-    const [isOpen, setIsOpen] = useState(false)
-    const pathname = usePathname()
+interface SidebarContentProps extends DashboardSidebarProps {
+    pathname: string | null
+    onClose: () => void
+}
 
-    // Helper to close menu on navigation
-    const handleLinkClick = () => {
-        setIsOpen(false)
-    }
+function SidebarContent({
+    profile,
+    batchInfo,
+    currentSemester,
+    userYear,
+    signOutAction,
+    pathname,
+    onClose,
+}: SidebarContentProps) {
+    const [unreadCount, setUnreadCount] = useState(0)
 
-    const SidebarContent = () => (
+    useEffect(() => {
+        const fetchUnreadCount = async () => {
+            try {
+                const response = await fetch('/api/notifications', { cache: 'no-store' })
+                if (!response.ok) return
+                const data = await response.json()
+                setUnreadCount(typeof data.unreadCount === 'number' ? data.unreadCount : 0)
+            } catch {
+                setUnreadCount(0)
+            }
+        }
+
+        fetchUnreadCount()
+    }, [pathname])
+
+    return (
         <div className="flex flex-col h-full bg-white text-[#161616]">
-            {/* Logo */}
             <div className="p-6 border-b border-gray-100 flex items-center justify-between">
-                <Link href="/dashboard" className="flex items-center gap-3" onClick={handleLinkClick}>
+                <Link href="/dashboard" className="flex items-center gap-3" onClick={onClose}>
                     <div className="p-2 bg-[#1B61D9] rounded-lg">
                         <GraduationCap className="h-6 w-6 text-white" />
                     </div>
                     <span className="text-xl font-bold text-[#161616]">UniLearn</span>
                 </Link>
-                {/* Mobile Close Button (only visible inside mobile sheet) */}
                 <Button
                     variant="ghost"
                     size="icon"
                     className="md:hidden"
-                    onClick={() => setIsOpen(false)}
+                    onClick={onClose}
                 >
                     <X className="h-5 w-5" />
                 </Button>
             </div>
 
-            {/* Navigation */}
             <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
                 <Link
                     href="/dashboard"
-                    onClick={handleLinkClick}
+                    onClick={onClose}
                     className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${pathname === '/dashboard'
                         ? 'bg-[#f0f4ff] text-[#1B61D9]'
                         : 'text-gray-600 hover:bg-[#f0f4ff] hover:text-[#1B61D9]'
@@ -61,7 +87,7 @@ export default function DashboardSidebar({ profile, batchInfo, userYear, signOut
                     <Link
                         key={year}
                         href={`/dashboard/year/${year}`}
-                        onClick={handleLinkClick}
+                        onClick={onClose}
                         className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${year <= userYear
                             ? 'text-gray-600 hover:bg-[#f0f4ff] hover:text-[#1B61D9]'
                             : 'text-gray-400'
@@ -81,9 +107,40 @@ export default function DashboardSidebar({ profile, batchInfo, userYear, signOut
                 ))}
 
                 <div className="pt-4 mt-4 border-t border-gray-100">
+                    {profile?.role === 'admin' && (
+                        <Link
+                            href="/admin"
+                            onClick={onClose}
+                            className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${pathname?.startsWith('/admin')
+                                ? 'bg-[#f0f4ff] text-[#1B61D9]'
+                                : 'text-gray-600 hover:bg-[#f0f4ff] hover:text-[#1B61D9]'
+                                }`}
+                        >
+                            <Shield className="h-5 w-5" />
+                            <span className="font-medium">Admin Panel</span>
+                        </Link>
+                    )}
+
+                    <Link
+                        href="/dashboard/notifications"
+                        onClick={onClose}
+                        className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${pathname === '/dashboard/notifications'
+                            ? 'bg-[#f0f4ff] text-[#1B61D9]'
+                            : 'text-gray-600 hover:bg-[#f0f4ff] hover:text-[#1B61D9]'
+                            }`}
+                    >
+                        <Bell className="h-5 w-5" />
+                        <span className="font-medium">Notifications</span>
+                        {unreadCount > 0 && (
+                            <span className="ml-auto rounded-full bg-[#1B61D9] px-2 py-0.5 text-xs font-semibold text-white">
+                                {unreadCount}
+                            </span>
+                        )}
+                    </Link>
+
                     <Link
                         href="/dashboard/history"
-                        onClick={handleLinkClick}
+                        onClick={onClose}
                         className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${pathname === '/dashboard/history'
                             ? 'bg-[#f0f4ff] text-[#1B61D9]'
                             : 'text-gray-600 hover:bg-[#f0f4ff] hover:text-[#1B61D9]'
@@ -95,7 +152,6 @@ export default function DashboardSidebar({ profile, batchInfo, userYear, signOut
                 </div>
             </nav>
 
-            {/* User Info */}
             <div className="p-4 border-t border-gray-100 mt-auto">
                 <div className="flex items-center gap-3 px-4 py-3 bg-gray-50 rounded-lg">
                     <div className="p-2 bg-[#1B61D9] rounded-full">
@@ -106,7 +162,7 @@ export default function DashboardSidebar({ profile, batchInfo, userYear, signOut
                             {profile?.index_number || 'Student'}
                         </p>
                         <p className="text-xs text-gray-500">
-                            {batchInfo ? `Year ${userYear} | ${batchInfo.batch_code?.split('_')[0]}` : 'No batch'}
+                            {batchInfo ? `Semester ${currentSemester || 0} | Year ${userYear} | ${batchInfo.batch_code?.split('_')[0]}` : 'No batch'}
                         </p>
                     </div>
                 </div>
@@ -123,6 +179,15 @@ export default function DashboardSidebar({ profile, batchInfo, userYear, signOut
             </div>
         </div>
     )
+}
+
+export default function DashboardSidebar({ profile, batchInfo, currentSemester, userYear, signOutAction }: DashboardSidebarProps) {
+    const [isOpen, setIsOpen] = useState(false)
+    const pathname = usePathname()
+
+    const handleClose = () => {
+        setIsOpen(false)
+    }
 
     return (
         <>
@@ -141,7 +206,15 @@ export default function DashboardSidebar({ profile, batchInfo, userYear, signOut
 
             {/* Desktop Sidebar (Hidden on Mobile) */}
             <aside className="hidden md:flex w-64 border-r border-gray-200 flex-col fixed inset-y-0 left-0 bg-white z-40">
-                <SidebarContent />
+                <SidebarContent
+                    profile={profile}
+                    batchInfo={batchInfo}
+                    currentSemester={currentSemester}
+                    userYear={userYear}
+                    signOutAction={signOutAction}
+                    pathname={pathname}
+                    onClose={handleClose}
+                />
             </aside>
 
             {/* Spacer for fixed sidebar on desktop */}
@@ -158,7 +231,15 @@ export default function DashboardSidebar({ profile, batchInfo, userYear, signOut
 
                     {/* Sidebar Drawer */}
                     <div className="absolute left-0 top-0 bottom-0 w-[80%] max-w-xs shadow-xl animate-in slide-in-from-left duration-200">
-                        <SidebarContent />
+                        <SidebarContent
+                            profile={profile}
+                            batchInfo={batchInfo}
+                            currentSemester={currentSemester}
+                            userYear={userYear}
+                            signOutAction={signOutAction}
+                            pathname={pathname}
+                            onClose={handleClose}
+                        />
                     </div>
                 </div>
             )}

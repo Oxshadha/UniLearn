@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
 import { ChevronRight } from 'lucide-react'
 import ModuleList from '@/components/module-list'
+import { getYearFromSemester } from '@/lib/academic'
 
 export default async function YearPage({
     params,
@@ -17,19 +18,31 @@ export default async function YearPage({
     const { data: { user } } = await supabase.auth.getUser()
     const { data: profile } = await supabase
         .from('profiles')
-        .select('*, batches(batch_number)')
+        .select('*, batches(current_semester)')
         .eq('id', user?.id)
         .single()
 
-    const userYear = profile?.batches?.batch_number ? 25 - profile.batches.batch_number : 0
+    const currentSemester = profile?.batches?.current_semester || 0
+    const userYear = getYearFromSemester(currentSemester)
     const canEdit = year <= userYear
 
     // Fetch modules for this year
+    const nowIso = new Date().toISOString()
+
     const { data: modules } = await supabase
         .from('modules')
         .select('*')
         .eq('year', year)
+        .is('deleted_at', null)
         .order('code')
+
+    const { data: deletedModules } = await supabase
+        .from('modules')
+        .select('*')
+        .eq('year', year)
+        .not('deleted_at', 'is', null)
+        .gt('purge_after', nowIso)
+        .order('deleted_at', { ascending: false })
 
     return (
         <div className="space-y-6">
@@ -51,16 +64,17 @@ export default async function YearPage({
                 </div>
 
                 <Badge className={canEdit ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}>
-                    {canEdit ? 'You can edit Year ' + year : 'View Only'}
+                    {canEdit ? `Some modules unlocked in Semester ${currentSemester}` : 'View Only'}
                 </Badge>
             </div>
 
             {/* Module List with CRUD */}
             <ModuleList
                 modules={modules || []}
+                deletedModules={deletedModules || []}
                 year={year}
                 canEdit={canEdit}
-                userYear={userYear}
+                currentSemester={currentSemester}
             />
         </div>
     )

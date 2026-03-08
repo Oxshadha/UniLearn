@@ -1,16 +1,14 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
-import { createClient } from '@/utils/supabase/client'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { sanitizeText } from '@/utils/sanitize'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import PastPaperForm, { PastPaperStructure, defaultPaperStructure } from './past-paper-form'
 import CAAssignmentForm, { ContinuousAssessment } from './ca-assignment-form'
-import RichTextArea, { FormattedContent } from './rich-text-editor'
-import BatchSelector from './batch-selector'
+import RichTextArea from './rich-text-editor'
 import { useBatchContent } from '@/hooks/use-batch-content'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
@@ -21,12 +19,13 @@ import {
     ChevronRight,
     Link as LinkIcon,
     FileText,
-    Youtube,
-    Folder,
     Loader2,
     User,
     Copy,
-    AlertCircle
+    CheckCircle,
+    ExternalLink,
+    RotateCcw,
+    Info
 } from 'lucide-react'
 
 interface ContentBlock {
@@ -56,18 +55,25 @@ interface ModuleContent {
     additionalNotes?: string
 }
 
+interface PastPaperLink {
+    id: string
+    module_id: string
+    batch_number: number
+    year: number
+    download_url: string
+    file_name: string
+    uploaded_at?: string
+    purge_after?: string | null
+}
+
 interface Props {
     moduleId: string
     canEdit: boolean
-    userBatchId?: string
-    userIndex?: string
 }
 
 export default function ModuleEditor({
     moduleId,
-    canEdit,
-    userBatchId,
-    userIndex
+    canEdit
 }: Props) {
     // Use batch content hook
     const {
@@ -78,7 +84,6 @@ export default function ModuleEditor({
         contentData,
         isLoading,
         isSaving,
-        error,
         handleBatchChange,
         saveContent,
         cloneFromBatch
@@ -94,25 +99,76 @@ export default function ModuleEditor({
     const [lastSaved, setLastSaved] = useState<string | null>(null)
     const [isEditMode, setIsEditMode] = useState(false)
     const [showCloneSuccess, setShowCloneSuccess] = useState(false)
-    const supabase = createClient()
+    const [pastPaperLinks, setPastPaperLinks] = useState<PastPaperLink[]>([])
+    const [deletedPastPaperLinks, setDeletedPastPaperLinks] = useState<PastPaperLink[]>([])
+    const [newPastPaperUrl, setNewPastPaperUrl] = useState('')
+    const [newPastPaperName, setNewPastPaperName] = useState('')
+    const [pastPaperError, setPastPaperError] = useState<string | null>(null)
+    const [isPastPaperSubmitting, setIsPastPaperSubmitting] = useState(false)
+    const nextIdRef = useRef(0)
 
     // Load content when contentData changes
     useEffect(() => {
         if (contentData) {
-            setContent({
-                topics: contentData.content?.content_json?.topics || [],
-                pastPaperStructure: contentData.pastPaperStructure?.structure_json || defaultPaperStructure,
-                continuousAssessments: contentData.continuousAssessments.map(ca => ({
-                    caNumber: ca.ca_number,
-                    type: ca.ca_type as ContinuousAssessment['type'],
-                    weight: ca.ca_weight,
-                    description: ca.description
-                })) || [],
-                additionalNotes: contentData.content?.content_json?.additionalNotes || ''
-            })
-            setLecturerName(contentData.content?.lecturer_name || '')
+            const syncTimer = window.setTimeout(() => {
+                setContent({
+                    topics: contentData.content?.content_json?.topics || [],
+                    pastPaperStructure: contentData.pastPaperStructure?.structure_json || defaultPaperStructure,
+                    continuousAssessments: contentData.continuousAssessments.map(ca => ({
+                        caNumber: ca.ca_number,
+                        type: ca.ca_type as ContinuousAssessment['type'],
+                        weight: ca.ca_weight,
+                        description: ca.description
+                    })) || [],
+                    additionalNotes: contentData.content?.content_json?.additionalNotes || ''
+                })
+                setLecturerName(contentData.content?.lecturer_name || '')
+                setPastPaperLinks(contentData.pastPaperDownloads || [])
+            }, 0)
+
+            return () => window.clearTimeout(syncTimer)
         }
     }, [contentData])
+
+    const fetchPastPaperLinks = useCallback(async (batchNumber: number) => {
+        try {
+            const [activeResponse, deletedResponse] = await Promise.all([
+                fetch(`/api/modules/${moduleId}/past-papers?batch=${batchNumber}`, { cache: 'no-store' }),
+                fetch(`/api/modules/${moduleId}/past-papers?batch=${batchNumber}&includeDeleted=true`, { cache: 'no-store' }),
+            ])
+
+            if (!activeResponse.ok || !deletedResponse.ok) {
+                throw new Error('Failed to refresh past paper links')
+            }
+
+            const activeData = await activeResponse.json()
+            const deletedData = await deletedResponse.json()
+            const deletedItems = (deletedData.items || []) as PastPaperLink[]
+            const restorable = deletedItems.filter((item) => {
+                if (!item.purge_after) return false
+                return new Date(item.purge_after).getTime() > Date.now()
+            })
+
+            setPastPaperLinks((activeData.items || []) as PastPaperLink[])
+            setDeletedPastPaperLinks(restorable)
+        } catch (error) {
+            console.error('Error refreshing past paper links:', error)
+        }
+    }, [moduleId])
+
+    const handleClone = useCallback(async () => {
+        if (!selectedBatch || !defaultBatch) return
+
+        const result = await cloneFromBatch(defaultBatch)
+
+        if (result.success) {
+            setShowCloneSuccess(true)
+            setTimeout(() => setShowCloneSuccess(false), 3000)
+            if (userBatchNumber) {
+                await fetchPastPaperLinks(userBatchNumber)
+            }
+        }
+    }, [selectedBatch, defaultBatch, cloneFromBatch, userBatchNumber, fetchPastPaperLinks])
 
     // Track if we have attempted auto-clone
     const hasAttemptedClone = useRef(false)
@@ -131,18 +187,31 @@ export default function ModuleEditor({
             !hasAttemptedClone.current
 
         if (shouldAutoClone) {
-            console.log('Auto-cloning from batch', defaultBatch)
-            hasAttemptedClone.current = true
-            handleClone()
-            setIsEditMode(false)
+            const cloneTimer = window.setTimeout(() => {
+                console.log('Auto-cloning from batch', defaultBatch)
+                hasAttemptedClone.current = true
+                void handleClone()
+                setIsEditMode(false)
+            }, 0)
+
+            return () => window.clearTimeout(cloneTimer)
         }
         
         if (!isViewingOwnBatch) {
             hasAttemptedClone.current = false
         }
-    }, [isEditMode, selectedBatch, userBatchNumber, defaultBatch, content.topics])
+    }, [isEditMode, selectedBatch, userBatchNumber, defaultBatch, content.topics, handleClone])
 
-    const generateId = () => Math.random().toString(36).substr(2, 9)
+    useEffect(() => {
+        if (selectedBatch !== null) {
+            void fetchPastPaperLinks(selectedBatch)
+        }
+    }, [selectedBatch, fetchPastPaperLinks])
+
+    const generateId = () => {
+        nextIdRef.current += 1
+        return `local-${nextIdRef.current}`
+    }
 
     // Topic functions
     const addTopic = () => {
@@ -262,6 +331,92 @@ export default function ModuleEditor({
         }))
     }
 
+    const canManagePastPapers = Boolean(
+        canEdit
+        && selectedBatch
+        && userBatchNumber
+        && (userBatchNumber === selectedBatch || userBatchNumber === selectedBatch + 1)
+    )
+
+    const addPastPaperLink = async () => {
+        if (!selectedBatch || !newPastPaperUrl.trim()) return
+
+        try {
+            setIsPastPaperSubmitting(true)
+            setPastPaperError(null)
+
+            const response = await fetch(`/api/modules/${moduleId}/past-papers`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    batchNumber: selectedBatch,
+                    downloadUrl: newPastPaperUrl.trim(),
+                    fileName: newPastPaperName.trim() || undefined,
+                }),
+            })
+
+            if (!response.ok) {
+                const data = await response.json()
+                throw new Error(data.error || 'Failed to add past paper link')
+            }
+
+            setNewPastPaperUrl('')
+            setNewPastPaperName('')
+            await fetchPastPaperLinks(selectedBatch)
+        } catch (error) {
+            setPastPaperError(error instanceof Error ? error.message : 'Failed to add past paper link')
+        } finally {
+            setIsPastPaperSubmitting(false)
+        }
+    }
+
+    const deletePastPaperLink = async (downloadId: string) => {
+        if (!selectedBatch) return
+
+        try {
+            setPastPaperError(null)
+            const response = await fetch(
+                `/api/modules/${moduleId}/content?batch=${selectedBatch}&downloadId=${downloadId}`,
+                { method: 'DELETE' }
+            )
+
+            if (!response.ok) {
+                const data = await response.json()
+                throw new Error(data.error || 'Failed to delete past paper link')
+            }
+
+            await fetchPastPaperLinks(selectedBatch)
+        } catch (error) {
+            setPastPaperError(error instanceof Error ? error.message : 'Failed to delete past paper link')
+        }
+    }
+
+    const restorePastPaperLink = async (id: string) => {
+        if (!selectedBatch) return
+
+        try {
+            setPastPaperError(null)
+            const response = await fetch(`/api/modules/${moduleId}/past-papers`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    id,
+                    batchNumber: selectedBatch,
+                    action: 'restore',
+                }),
+            })
+
+            if (!response.ok) {
+                const data = await response.json()
+                throw new Error(data.error || 'Failed to restore past paper link')
+            }
+
+            await fetchPastPaperLinks(selectedBatch)
+        } catch (error) {
+            setPastPaperError(error instanceof Error ? error.message : 'Failed to restore past paper link')
+        }
+    }
+
     const handleSave = async () => {
         if (!selectedBatch) return
 
@@ -300,17 +455,6 @@ export default function ModuleEditor({
         }
     }
 
-    const handleClone = async () => {
-        if (!selectedBatch || !defaultBatch) return
-
-        const result = await cloneFromBatch(defaultBatch)
-
-        if (result.success) {
-            setShowCloneSuccess(true)
-            setTimeout(() => setShowCloneSuccess(3000), false)
-        }
-    }
-
     // Show loading state
     if (isLoading && !selectedBatch) {
         return (
@@ -328,7 +472,7 @@ export default function ModuleEditor({
                     <FileText className="h-12 w-12 text-gray-300 mx-auto mb-4" />
                     <p className="text-gray-500">No content yet.</p>
                     <p className="text-sm text-gray-400 mt-2">
-                        Only students in the correct year can add content.
+                        Only students in the current semester window can add content.
                     </p>
                 </CardContent>
             </Card>
@@ -457,8 +601,8 @@ export default function ModuleEditor({
                             </div>
                             <h3 className="text-lg font-semibold text-[#161616] mb-2">Start Building Content</h3>
                             <p className="text-gray-500 mb-4 max-w-md mx-auto">
-                                Click "Add Topic" above to start organizing this module's learning materials.
-                                Add topics, sub-topics, notes, and links!
+                                Click &ldquo;Add Topic&rdquo; above to start organizing this module&apos;s learning materials.
+                                Add topics, sub-topics, notes, and links.
                             </p>
                             <Button onClick={addTopic} style={{ backgroundColor: '#1B61D9' }}>
                                 <Plus className="h-4 w-4 mr-2" /> Add Your First Topic
@@ -634,6 +778,123 @@ export default function ModuleEditor({
                     onChange={(newValue) => setContent(prev => ({ ...prev, pastPaperStructure: newValue }))}
                     canEdit={isEditMode}
                 />
+
+                <Card className="border shadow-sm">
+                    <CardHeader className="py-3 px-4 bg-blue-50">
+                        <div className="flex items-center justify-between gap-3">
+                            <h3 className="text-sm font-semibold text-blue-700">
+                                Past Paper Links (Google Drive / PDF URL)
+                            </h3>
+                            <Badge variant="outline">B{selectedBatch}</Badge>
+                        </div>
+                    </CardHeader>
+                    <CardContent className="space-y-4 p-4">
+                        {pastPaperError && (
+                            <Alert className="border-red-200 bg-red-50">
+                                <AlertDescription className="text-red-700">{pastPaperError}</AlertDescription>
+                            </Alert>
+                        )}
+
+                        {canManagePastPapers ? (
+                            <div className="rounded-lg border bg-white p-3 space-y-3">
+                                <Input
+                                    value={newPastPaperUrl}
+                                    onChange={(e) => setNewPastPaperUrl(sanitizeText(e.target.value))}
+                                    placeholder="Paste Google Drive link or PDF URL"
+                                />
+                                <Input
+                                    value={newPastPaperName}
+                                    onChange={(e) => setNewPastPaperName(sanitizeText(e.target.value))}
+                                    placeholder="Optional name (e.g., 2025 Final Paper)"
+                                    maxLength={150}
+                                />
+                                <div className="flex justify-end">
+                                    <Button
+                                        type="button"
+                                        onClick={addPastPaperLink}
+                                        disabled={isPastPaperSubmitting || !newPastPaperUrl.trim()}
+                                        style={{ backgroundColor: '#1B61D9' }}
+                                    >
+                                        {isPastPaperSubmitting ? (
+                                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                        ) : (
+                                            <Plus className="h-4 w-4 mr-2" />
+                                        )}
+                                        Add Link
+                                    </Button>
+                                </div>
+                            </div>
+                        ) : (
+                            <p className="text-sm text-gray-500">
+                                You can view links for this batch. Editing is allowed for the owning batch and its immediate junior batch.
+                            </p>
+                        )}
+
+                        <div className="space-y-2">
+                            {pastPaperLinks.length === 0 ? (
+                                <p className="text-sm text-gray-500">No past paper links added yet.</p>
+                            ) : (
+                                pastPaperLinks.map((item) => (
+                                    <div key={item.id} className="flex items-center justify-between gap-3 rounded-lg border bg-white p-3">
+                                        <div className="min-w-0">
+                                            <p className="truncate font-medium text-sm text-[#161616]">{item.file_name}</p>
+                                            <a
+                                                href={item.download_url}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="truncate text-xs text-blue-600 hover:underline block"
+                                            >
+                                                {item.download_url}
+                                            </a>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <Button type="button" variant="outline" size="sm" asChild>
+                                                <a href={item.download_url} target="_blank" rel="noopener noreferrer">
+                                                    <ExternalLink className="h-3 w-3 mr-1" />
+                                                    Open
+                                                </a>
+                                            </Button>
+                                            {canManagePastPapers && (
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="text-red-500 hover:text-red-700"
+                                                    onClick={() => deletePastPaperLink(item.id)}
+                                                >
+                                                    <Trash2 className="h-4 w-4" />
+                                                </Button>
+                                            )}
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+
+                        {canManagePastPapers && deletedPastPaperLinks.length > 0 && (
+                            <div className="space-y-2 border-t pt-2">
+                                <p className="text-xs font-medium text-gray-600">Recently Deleted (7-day restore)</p>
+                                {deletedPastPaperLinks.map((item) => (
+                                    <div key={item.id} className="flex items-center justify-between gap-3 rounded-lg border border-orange-200 bg-orange-50/40 p-3">
+                                        <div className="min-w-0">
+                                            <p className="truncate text-sm text-[#161616]">{item.file_name}</p>
+                                            <p className="truncate text-xs text-gray-500">{item.download_url}</p>
+                                        </div>
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => restorePastPaperLink(item.id)}
+                                        >
+                                            <RotateCcw className="h-3 w-3 mr-1" />
+                                            Restore
+                                        </Button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </CardContent>
+                </Card>
             </div>
         </div>
     )

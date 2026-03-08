@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { BatchInfo } from '@/components/batch-selector'
 
 export interface ModuleContent {
-    topics: any[]
+    topics: Array<Record<string, unknown>>
     additionalNotes?: string
 }
 
@@ -16,7 +16,7 @@ export interface PastPaperStructure {
     mcqMarks: number
     essayCount: number
     essayMarks: number
-    essayQuestions: any[]
+    essayQuestions: Array<Record<string, unknown>>
 }
 
 export interface ContinuousAssessment {
@@ -43,9 +43,22 @@ export interface BatchContentData {
         ca_weight: number
         description: string
     }>
+    pastPaperDownloads: Array<{
+        id: string
+        module_id: string
+        batch_number: number
+        year: number
+        download_url: string
+        file_name: string
+        uploaded_at?: string
+        uploaded_by?: string
+        deleted_at?: string | null
+        purge_after?: string | null
+    }>
     hasContent: boolean
     hasPaperStructure: boolean
     hasCAs: boolean
+    hasPastPaperDownloads: boolean
 }
 
 export function useBatchContent(moduleId: string) {

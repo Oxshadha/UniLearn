@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
-import { sanitizeText, sanitizeEmail } from '@/utils/sanitize'
+import { sanitizeText } from '@/utils/sanitize'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -11,6 +11,8 @@ import { Card, CardHeader, CardContent, CardFooter, CardTitle, CardDescription }
 import { Loader2, GraduationCap, ArrowLeft, Eye, EyeOff } from 'lucide-react'
 import BackgroundAnimation from '@/components/background-animation'
 import Link from 'next/link'
+import { getAcademicYearFromBatchNumber, getStartingSemesterForBatch } from '@/lib/academic'
+import { getStudentEmail, validateStudentCredentials } from '@/lib/auth-validation'
 
 export default function LoginPage() {
     const [indexNumber, setIndexNumber] = useState('')
@@ -30,7 +32,7 @@ export default function LoginPage() {
 
         const batchNum = parseInt(match[1])
         const degreeCode = match[2]
-        const currentYear = 25 - batchNum
+        const currentYear = getAcademicYearFromBatchNumber(batchNum)
 
         let degree = 'AI'
         let batchCode = `AI_Batch_${batchNum}`
@@ -54,8 +56,16 @@ export default function LoginPage() {
         setLoading(true)
         setError(null)
 
-        const cleanIndex = indexNumber.trim().toUpperCase()
-        const email = `${cleanIndex.toLowerCase()}@student.unilearn.edu`
+        const validation = validateStudentCredentials(indexNumber, password)
+        if (!validation.valid) {
+            setError(validation.error)
+            setLoading(false)
+            return
+        }
+
+        const cleanIndex = validation.cleanIndex
+        const numericPart = validation.numericPart
+        const email = getStudentEmail(numericPart)
 
         const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
             email,
@@ -63,7 +73,11 @@ export default function LoginPage() {
         })
 
         if (authError) {
-            setError(authError.message)
+            if (authError.message.toLowerCase().includes('invalid login credentials')) {
+                setError('No account found for these details. Click "Register New Account" to create one.')
+            } else {
+                setError(authError.message)
+            }
             setLoading(false)
             return
         }
@@ -95,11 +109,31 @@ export default function LoginPage() {
         setLoading(true)
         setError(null)
 
-        const cleanIndex = indexNumber.trim().toUpperCase()
+        const validation = validateStudentCredentials(indexNumber, password)
+        if (!validation.valid) {
+            setError(validation.error)
+            setLoading(false)
+            return
+        }
+
+        const cleanIndex = validation.cleanIndex
+        const numericPart = validation.numericPart
         const parsed = parseIndex(cleanIndex)
 
         if (!parsed) {
             setError("Invalid Index Number format. Expected: 235550X")
+            setLoading(false)
+            return
+        }
+
+        const { data: existingProfile } = await supabase
+            .from('profiles')
+            .select('id, index_number')
+            .ilike('index_number', `${numericPart}%`)
+            .limit(1)
+
+        if (existingProfile && existingProfile.length > 0) {
+            setError('User already registered. Click "Sign In" to continue.')
             setLoading(false)
             return
         }
@@ -123,13 +157,13 @@ export default function LoginPage() {
                 return
             }
 
-            const { data: newBatch, error: createError } = await supabase
+            const { error: createError } = await supabase
                 .from('batches')
                 .insert({
                     batch_code: parsed.batchCode,
                     degree_id: degreeData.id,
                     batch_number: parsed.batchNum,
-                    current_semester: parsed.currentYear * 2 - 1
+                    current_semester: getStartingSemesterForBatch(parsed.batchNum)
                 })
                 .select('id')
                 .single()
@@ -154,7 +188,7 @@ export default function LoginPage() {
             return
         }
 
-        const email = `${cleanIndex.toLowerCase()}@student.unilearn.edu`
+        const email = getStudentEmail(numericPart)
 
         const { data: signupData, error: signUpError } = await supabase.auth.signUp({
             email,
@@ -162,6 +196,7 @@ export default function LoginPage() {
             options: {
                 data: {
                     index_number: cleanIndex,
+                    index_number_raw: cleanIndex,
                     full_name: '',
                     batch_id: finalBatch.id
                 }
@@ -169,7 +204,11 @@ export default function LoginPage() {
         })
 
         if (signUpError) {
-            setError(signUpError.message)
+            if (signUpError.message.toLowerCase().includes('user already registered')) {
+                setError('User already registered. Click "Sign In" to continue.')
+            } else {
+                setError(signUpError.message)
+            }
             setLoading(false)
             return
         }
@@ -230,7 +269,11 @@ export default function LoginPage() {
                                 onChange={(e) => setIndexNumber(sanitizeText(e.target.value))}
                                 required
                                 className="uppercase text-center text-lg font-mono tracking-wider h-12 border-2 border-gray-200 focus:border-[#1B61D9] focus:ring-[#1B61D9]"
-                                maxLength={10}
+                                maxLength={7}
+                                pattern="\d{6}[A-Za-z]"
+                                title="Use the format 235550X"
+                                inputMode="text"
+                                autoComplete="username"
                             />
                         </div>
                         <div className="space-y-2">
@@ -243,6 +286,10 @@ export default function LoginPage() {
                                     onChange={(e) => setPassword(e.target.value)}
                                     required
                                     className="h-12 border-2 border-gray-200 focus:border-[#1B61D9] focus:ring-[#1B61D9] text-center pr-12"
+                                    minLength={8}
+                                    pattern="(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_\-+=[\]{};:'&quot;,.&lt;&gt;/?\\|`~])[A-Za-z\d!@#$%^&*()_\-+=[\]{};:'&quot;,.&lt;&gt;/?\\|`~]{8,}"
+                                    title="Minimum 8 characters with an uppercase letter, a number, and an ASCII special character. No spaces or emojis."
+                                    autoComplete="current-password"
                                 />
                                 <button
                                     type="button"

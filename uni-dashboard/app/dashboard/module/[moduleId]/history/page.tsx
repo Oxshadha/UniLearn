@@ -3,7 +3,14 @@ import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { ChevronRight, History, Clock, User, ArrowLeft } from 'lucide-react'
+import { ChevronRight, Clock, User, ArrowLeft } from 'lucide-react'
+
+interface ModuleHistoryLog {
+    id: string
+    edited_by_index: string
+    edit_reason: string | null
+    created_at: string
+}
 
 export default async function ModuleHistoryPage({
     params,
@@ -29,9 +36,9 @@ export default async function ModuleHistoryPage({
         .from('edit_logs')
         .select(`
             *,
-            module_contents!inner(module_id)
+            module_content_versions!inner(module_id)
         `)
-        .eq('module_contents.module_id', moduleId)
+        .eq('module_content_versions.module_id', moduleId)
         .order('created_at', { ascending: false })
         .limit(50)
 
@@ -81,7 +88,7 @@ export default async function ModuleHistoryPage({
                 </Card>
             ) : (
                 <div className="space-y-3">
-                    {logs.map((log: any, index: number) => (
+                    {(logs as ModuleHistoryLog[]).map((log, index: number) => (
                         <Card key={log.id} className="border-0 shadow-sm hover:shadow-md transition-shadow">
                             <CardContent className="p-4">
                                 <div className="flex items-start justify-between">
@@ -101,7 +108,7 @@ export default async function ModuleHistoryPage({
                                             </p>
                                             {log.edit_reason && (
                                                 <p className="text-sm text-gray-500 mt-1">
-                                                    "{log.edit_reason}"
+                                                    <span>&ldquo;{log.edit_reason}&rdquo;</span>
                                                 </p>
                                             )}
                                         </div>

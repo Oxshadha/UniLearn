@@ -2,6 +2,7 @@ import { createClient } from '@/utils/supabase/server'
 import { redirect } from 'next/navigation'
 import { signOut } from './actions'
 import DashboardSidebar from '@/components/dashboard-sidebar'
+import { getYearFromSemester } from '@/lib/academic'
 
 export default async function DashboardLayout({
     children,
@@ -23,7 +24,7 @@ export default async function DashboardLayout({
         .single()
 
     const batchInfo = profile?.batches
-    const userYear = batchInfo?.batch_number ? 25 - batchInfo.batch_number : 0
+    const userYear = getYearFromSemester(batchInfo?.current_semester)
 
     return (
         <div className="min-h-screen bg-[#f8fafc] flex flex-col md:flex-row">
@@ -31,6 +32,7 @@ export default async function DashboardLayout({
             <DashboardSidebar
                 profile={profile}
                 batchInfo={batchInfo}
+                currentSemester={batchInfo?.current_semester}
                 userYear={userYear}
                 signOutAction={signOut}
             />
